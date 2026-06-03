@@ -1,6 +1,7 @@
 import './globals.css';
 import '../index.css';
 import type { Metadata, Viewport } from 'next';
+import Script from 'next/script';
 import { inter, merriweather } from './fonts';
 import LayoutClientWrapper from '@/components/LayoutClientWrapper';
 import { SITE_URL, siteConfig } from '@/config/site';
@@ -24,15 +25,9 @@ export const metadata: Metadata = {
   authors: [{ name: siteConfig.businessName }],
   creator: siteConfig.businessName,
   publisher: siteConfig.businessName,
-  formatDetection: {
-    email: false,
-    address: false,
-    telephone: false,
-  },
+  formatDetection: { email: false, address: false, telephone: false },
   metadataBase: new URL(SITE_URL),
-  alternates: {
-    canonical: '/',
-  },
+  alternates: { canonical: '/' },
   category: 'restaurant',
   openGraph: {
     title: `${siteConfig.businessName} | ${siteConfig.titleSuffix}`,
@@ -42,18 +37,8 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'en_US',
     images: [
-      {
-        url: `${SITE_URL}/Truck/truck-4.jpg`,
-        width: 1200,
-        height: 630,
-        alt: `${siteConfig.businessName} - food`,
-      },
-      {
-        url: `${SITE_URL}/Food/foodtable.webp`,
-        width: 1200,
-        height: 630,
-        alt: `Menu and food at ${siteConfig.businessName}`,
-      },
+      { url: `${SITE_URL}/Truck/truck-4.jpg`,      width: 1200, height: 630, alt: `${siteConfig.businessName} - food` },
+      { url: `${SITE_URL}/Food/foodtable.webp`,    width: 1200, height: 630, alt: `Menu and food at ${siteConfig.businessName}` },
     ],
   },
   twitter: {
@@ -66,30 +51,24 @@ export const metadata: Metadata = {
   robots: {
     index: true,
     follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      'max-video-preview': -1,
-      'max-image-preview': 'large',
-      'max-snippet': -1,
-    },
+    googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 },
   },
   other: {
-    'geo.region': siteConfig.geoRegionMeta,
+    'geo.region':   siteConfig.geoRegionMeta,
     'geo.placename': siteConfig.geoPlacename,
     'geo.position': `${siteConfig.latitude};${siteConfig.longitude}`,
-    ICBM: `${siteConfig.latitude}, ${siteConfig.longitude}`,
+    ICBM:           `${siteConfig.latitude}, ${siteConfig.longitude}`,
   },
   ...(process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION
-    ? {
-        verification: {
-          google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION,
-        },
-      }
+    ? { verification: { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION } }
     : {}),
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const agentId   = process.env.NEXT_PUBLIC_DINQ_AGENT_ID;
+  const agentName = process.env.NEXT_PUBLIC_BUSINESS_NAME || 'Chat with us';
+  const agentColor = process.env.NEXT_PUBLIC_THEME_COLOR  || '#FF6B35';
+
   return (
     <html lang="en" className={`${inter.variable} ${merriweather.variable}`}>
       <head>
@@ -108,17 +87,34 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        <a
+        
           href="#main-content"
           className="skip-link sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 bg-your-orange text-white px-4 py-2 rounded shadow transition-all"
         >
           Skip to main content
         </a>
+
         <LayoutClientWrapper>
           <main id="main-content" tabIndex={-1}>
             {children}
           </main>
         </LayoutClientWrapper>
+
+        {/* ── DinqAgent Widget (DinqPlus Pro only) ─────────────────
+            Only renders if NEXT_PUBLIC_DINQ_AGENT_ID is set.
+            Leave blank for Option 1 (standalone) clients.
+        ──────────────────────────────────────────────────────── */}
+        {agentId && (
+          <Script
+            id="dinq-agent"
+            src="https://dinqdigital.com/agent/widget.js"
+            data-agent-id={agentId}
+            data-client-name={agentName}
+            data-accent={agentColor}
+            data-position="bottom-right"
+            strategy="lazyOnload"
+          />
+        )}
       </body>
     </html>
   );
