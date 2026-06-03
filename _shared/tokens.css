@@ -1,0 +1,659 @@
+/**
+ * Dinq Design System — Shared Tokens
+ * ─────────────────────────────────────────────────────────────
+ * Aligned with DinqPlus v2 design system (Tailwind v4.2)
+ * Background: #010812 | Glass surfaces | Dark mode only
+ *
+ * Import in any template regardless of stack:
+ *   Next.js:  import '@/styles/tokens.css'
+ *   Astro:    <link rel="stylesheet" href="/_shared/tokens.css">
+ *   HTML:     <link rel="stylesheet" href="/_shared/tokens.css">
+ *   Vue:      import '/_shared/tokens.css'
+ * ─────────────────────────────────────────────────────────────
+ */
+
+:root {
+  /* ── Brand Core ────────────────────────────────────────── */
+  --dinq-bg:          #010812;
+  --dinq-surface:     rgba(255, 255, 255, 0.05);
+  --dinq-modal:       rgba(15, 26, 58, 0.95);
+  --dinq-white:       #FFFFFF;
+  --dinq-muted:       rgba(255, 255, 255, 0.30);
+  --dinq-ecosystem:   #6C5CE7;
+
+  /* ── Glass System ──────────────────────────────────────── */
+  --glass-bg:         rgba(255, 255, 255, 0.05);
+  --glass-border:     rgba(255, 255, 255, 0.10);
+  --glass-border-md:  rgba(255, 255, 255, 0.20);
+  --glass-blur:       blur(8px);
+  --glass-blur-heavy: blur(24px);
+
+  /* ── Typography ────────────────────────────────────────── */
+  --font-display: 'Playfair Display', Georgia, serif;
+  --font-body:    'Inter', system-ui, sans-serif;
+  --font-mono:    'Share Tech Mono', monospace;
+
+  /* ── Spacing ───────────────────────────────────────────── */
+  --space-1:  0.25rem;
+  --space-2:  0.5rem;
+  --space-4:  1rem;
+  --space-6:  1.5rem;
+  --space-8:  2rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-24: 6rem;
+
+  /* ── Radius ────────────────────────────────────────────── */
+  --radius-sm:   6px;
+  --radius-md:   12px;
+  --radius-lg:   20px;
+  --radius-xl:   32px;
+  --radius-full: 9999px;
+
+  /* ── Motion ────────────────────────────────────────────── */
+  --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 150ms;
+  --duration-base: 300ms;
+  --duration-slow: 600ms;
+
+  /* ── Z-index ───────────────────────────────────────────── */
+  --z-nav:   100;
+  --z-modal: 200;
+  --z-agent: 9999;
+
+  /* ── Scrollbar ─────────────────────────────────────────── */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(108, 92, 231, 0.40) transparent;
+}
+
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(108, 92, 231, 0.40); border-radius: 2px; }
+
+/* ── Vertical accent colors ────────────────────────────────
+   Matches DinqPlus 25 vertical primary colors exactly.
+   Apply class to <html> or <body> in each template.
+   ────────────────────────────────────────────────────────── */
+
+/* 1. Restaurant / Food Truck — DinqServe */
+.theme-serve, .theme-restaurant {
+  --accent:            #E05D38;
+  --accent-light:      #F07050;
+  --accent-dim:        rgba(224, 93, 56, 0.20);
+  --scrollbar-color:   rgba(224, 93, 56, 0.40);
+}
+
+/* 2. Salon / Beauty / Hair — DinqBook */
+.theme-book, .theme-salon, .theme-beauty {
+  --accent:            #6C5CE7;
+  --accent-light:      #8B7FF0;
+  --accent-dim:        rgba(108, 92, 231, 0.20);
+  --scrollbar-color:   rgba(108, 92, 231, 0.40);
+}
+
+/* 3. Auto Repair — DinqShop */
+.theme-shop, .theme-auto {
+  --accent:            #3B82F6;
+  --accent-light:      #60A5FA;
+  --accent-dim:        rgba(59, 130, 246, 0.20);
+  --scrollbar-color:   rgba(59, 130, 246, 0.40);
+}
+
+/* 4. Home Care — DinqCare */
+.theme-care {
+  --accent:            #2E7D32;
+  --accent-light:      #4CAF50;
+  --accent-dim:        rgba(46, 125, 50, 0.20);
+  --scrollbar-color:   rgba(46, 125, 50, 0.40);
+}
+
+/* 5. Agency — DinqAgency */
+.theme-agency {
+  --accent:            #A67C52;
+  --accent-light:      #C49A70;
+  --accent-dim:        rgba(166, 124, 82, 0.20);
+  --scrollbar-color:   rgba(166, 124, 82, 0.40);
+}
+
+/* 6. Security — DinqGuard */
+.theme-guard {
+  --accent:            #06858E;
+  --accent-light:      #0AABB6;
+  --accent-dim:        rgba(6, 133, 142, 0.20);
+  --scrollbar-color:   rgba(6, 133, 142, 0.40);
+}
+
+/* 7. Factory / Manufacturing — DinqFactory */
+.theme-factory {
+  --accent:            #065F46;
+  --accent-light:      #10B981;
+  --accent-dim:        rgba(6, 95, 70, 0.20);
+  --scrollbar-color:   rgba(6, 95, 70, 0.40);
+}
+
+/* 8. Artist / Creative — DinqArtist */
+.theme-artist {
+  --accent:            #8B5CF6;
+  --accent-light:      #A78BFA;
+  --accent-dim:        rgba(139, 92, 246, 0.20);
+  --scrollbar-color:   rgba(139, 92, 246, 0.40);
+}
+
+/* 9. Files / Documents — DinqFile */
+.theme-file {
+  --accent:            #2383E2;
+  --accent-light:      #4BA3FF;
+  --accent-dim:        rgba(35, 131, 226, 0.20);
+  --scrollbar-color:   rgba(35, 131, 226, 0.40);
+}
+
+/* 10. Education — DinqLearn */
+.theme-learn {
+  --accent:            #171717;
+  --accent-light:      #333333;
+  --accent-dim:        rgba(23, 23, 23, 0.20);
+  --scrollbar-color:   rgba(23, 23, 23, 0.40);
+}
+
+/* 11. Ride / Transport — DinqRide */
+.theme-ride {
+  --accent:            #F5C518;
+  --accent-light:      #FFD740;
+  --accent-dim:        rgba(245, 197, 24, 0.20);
+  --scrollbar-color:   rgba(245, 197, 24, 0.40);
+}
+
+/* 12. Logistics — DinqLogix */
+.theme-logix {
+  --accent:            #0A2463;
+  --accent-light:      #1A3A8F;
+  --accent-dim:        rgba(10, 36, 99, 0.20);
+  --scrollbar-color:   rgba(10, 36, 99, 0.40);
+}
+
+/* 13. Payments — DinqPay */
+.theme-pay {
+  --accent:            #00D632;
+  --accent-light:      #33FF66;
+  --accent-dim:        rgba(0, 214, 50, 0.20);
+  --scrollbar-color:   rgba(0, 214, 50, 0.40);
+}
+
+/* 14. Delivery — DinqDrop */
+.theme-drop {
+  --accent:            #3A5BA0;
+  --accent-light:      #5A7BC0;
+  --accent-dim:        rgba(58, 91, 160, 0.20);
+  --scrollbar-color:   rgba(58, 91, 160, 0.40);
+}
+
+/* 15. Tours — DinqTour */
+.theme-tour {
+  --accent:            #34A85A;
+  --accent-light:      #4DC870;
+  --accent-dim:        rgba(52, 168, 90, 0.20);
+  --scrollbar-color:   rgba(52, 168, 90, 0.40);
+}
+
+/* 16. Stay / Hospitality — DinqStay */
+.theme-stay {
+  --accent:            #644A40;
+  --accent-light:      #8A6A60;
+  --accent-dim:        rgba(100, 74, 64, 0.20);
+  --scrollbar-color:   rgba(100, 74, 64, 0.40);
+}
+
+/* 17. Cleaning — DinqClean */
+.theme-clean {
+  --accent:            #8D9D4F;
+  --accent-light:      #ADBF6F;
+  --accent-dim:        rgba(141, 157, 79, 0.20);
+  --scrollbar-color:   rgba(141, 157, 79, 0.40);
+}
+
+/* 18. Style / Fashion — DinqStyle */
+.theme-style {
+  --accent:            #644A40;
+  --accent-light:      #8A6A60;
+  --accent-dim:        rgba(100, 74, 64, 0.20);
+  --scrollbar-color:   rgba(100, 74, 64, 0.40);
+}
+
+/* 19. Fitness / Gym — DinqFit */
+.theme-fit {
+  --accent:            #1E9DF1;
+  --accent-light:      #4DB8FF;
+  --accent-dim:        rgba(30, 157, 241, 0.20);
+  --scrollbar-color:   rgba(30, 157, 241, 0.40);
+}
+
+/* 20. Events — DinqEvents */
+.theme-events {
+  --accent:            #F59E0B;
+  --accent-light:      #FBBF24;
+  --accent-dim:        rgba(245, 158, 11, 0.20);
+  --scrollbar-color:   rgba(245, 158, 11, 0.40);
+}
+
+/* 21. Market / Retail — DinqMarket */
+.theme-market {
+  --accent:            #E85D04;
+  --accent-light:      #FF7A20;
+  --accent-dim:        rgba(232, 93, 4, 0.20);
+  --scrollbar-color:   rgba(232, 93, 4, 0.40);
+}
+
+/* 22. Construction — DinqBuild */
+.theme-build {
+  --accent:            #F5A623;
+  --accent-light:      #FFBE4D;
+  --accent-dim:        rgba(245, 166, 35, 0.20);
+  --scrollbar-color:   rgba(245, 166, 35, 0.40);
+}
+
+/* 23. Agriculture — DinqGrow */
+.theme-grow {
+  --accent:            #367C2B;
+  --accent-light:      #4CAF50;
+  --accent-dim:        rgba(54, 124, 43, 0.20);
+  --scrollbar-color:   rgba(54, 124, 43, 0.40);
+}
+
+/* 24. Gigs / Freelance — DinqGigs */
+.theme-gigs {
+  --accent:            #FF6B35;
+  --accent-light:      #FF8555;
+  --accent-dim:        rgba(255, 107, 53, 0.20);
+  --scrollbar-color:   rgba(255, 107, 53, 0.40);
+}
+
+/* 25. Health / Medical — DinqHealth */
+.theme-health {
+  --accent:            #0EA5E9;
+  --accent-light:      #38BDF8;
+  --accent-dim:        rgba(14, 165, 233, 0.20);
+  --scrollbar-color:   rgba(14, 165, 233, 0.40);
+}
+
+/* ── Glass utility classes ──────────────────────────────────
+   Use these in any template — works in plain HTML too
+   ────────────────────────────────────────────────────────── */
+.glass {
+  background:           var(--glass-bg);
+  backdrop-filter:      var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border:               1px solid var(--glass-border);
+  border-radius:        var(--radius-lg);
+}
+
+.glass-heavy {
+  background:           var(--dinq-modal);
+  backdrop-filter:      var(--glass-blur-heavy);
+  -webkit-backdrop-filter: var(--glass-blur-heavy);
+  border:               1px solid var(--glass-border-md);
+  border-radius:        var(--radius-xl);
+}
+
+.btn-primary {
+  background:    var(--accent);
+  color:         #ffffff;
+  border:        none;
+  border-radius: var(--radius-full);
+  padding:       12px 32px;
+  font-family:   var(--font-body);
+  font-weight:   600;
+  font-size:     14px;
+  cursor:        pointer;
+  transition:    all var(--duration-base) var(--ease-out);
+}
+
+.btn-primary:hover {
+  background: var(--accent-light);
+  transform:  translateY(-2px);
+}
+
+.input-glass {
+  background:    var(--glass-bg);
+  border:        1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  color:         var(--dinq-white);
+  padding:       12px 16px;
+  font-family:   var(--font-body);
+  font-size:     14px;
+  outline:       none;
+  transition:    border-color var(--duration-fast) ease;
+  width:         100%;
+}
+
+.input-glass::placeholder { color: var(--dinq-muted); }
+.input-glass:focus        { border-color: var(--accent); }
+EOFcat > _shared/tokens.css << 'EOF'
+/**
+ * Dinq Design System — Shared Tokens
+ * ─────────────────────────────────────────────────────────────
+ * Aligned with DinqPlus v2 design system (Tailwind v4.2)
+ * Background: #010812 | Glass surfaces | Dark mode only
+ *
+ * Import in any template regardless of stack:
+ *   Next.js:  import '@/styles/tokens.css'
+ *   Astro:    <link rel="stylesheet" href="/_shared/tokens.css">
+ *   HTML:     <link rel="stylesheet" href="/_shared/tokens.css">
+ *   Vue:      import '/_shared/tokens.css'
+ * ─────────────────────────────────────────────────────────────
+ */
+
+:root {
+  /* ── Brand Core ────────────────────────────────────────── */
+  --dinq-bg:          #010812;
+  --dinq-surface:     rgba(255, 255, 255, 0.05);
+  --dinq-modal:       rgba(15, 26, 58, 0.95);
+  --dinq-white:       #FFFFFF;
+  --dinq-muted:       rgba(255, 255, 255, 0.30);
+  --dinq-ecosystem:   #6C5CE7;
+
+  /* ── Glass System ──────────────────────────────────────── */
+  --glass-bg:         rgba(255, 255, 255, 0.05);
+  --glass-border:     rgba(255, 255, 255, 0.10);
+  --glass-border-md:  rgba(255, 255, 255, 0.20);
+  --glass-blur:       blur(8px);
+  --glass-blur-heavy: blur(24px);
+
+  /* ── Typography ────────────────────────────────────────── */
+  --font-display: 'Playfair Display', Georgia, serif;
+  --font-body:    'Inter', system-ui, sans-serif;
+  --font-mono:    'Share Tech Mono', monospace;
+
+  /* ── Spacing ───────────────────────────────────────────── */
+  --space-1:  0.25rem;
+  --space-2:  0.5rem;
+  --space-4:  1rem;
+  --space-6:  1.5rem;
+  --space-8:  2rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-24: 6rem;
+
+  /* ── Radius ────────────────────────────────────────────── */
+  --radius-sm:   6px;
+  --radius-md:   12px;
+  --radius-lg:   20px;
+  --radius-xl:   32px;
+  --radius-full: 9999px;
+
+  /* ── Motion ────────────────────────────────────────────── */
+  --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 150ms;
+  --duration-base: 300ms;
+  --duration-slow: 600ms;
+
+  /* ── Z-index ───────────────────────────────────────────── */
+  --z-nav:   100;
+  --z-modal: 200;
+  --z-agent: 9999;
+
+  /* ── Scrollbar ─────────────────────────────────────────── */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(108, 92, 231, 0.40) transparent;
+}
+
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(108, 92, 231, 0.40); border-radius: 2px; }
+
+/* ── Vertical accent colors ────────────────────────────────
+   Matches DinqPlus 25 vertical primary colors exactly.
+   Apply class to <html> or <body> in each template.
+   ────────────────────────────────────────────────────────── */
+
+/* 1. Restaurant / Food Truck — DinqServe */
+.theme-serve, .theme-restaurant {
+  --accent:            #E05D38;
+  --accent-light:      #F07050;
+  --accent-dim:        rgba(224, 93, 56, 0.20);
+  --scrollbar-color:   rgba(224, 93, 56, 0.40);
+}
+
+/* 2. Salon / Beauty / Hair — DinqBook */
+.theme-book, .theme-salon, .theme-beauty {
+  --accent:            #6C5CE7;
+  --accent-light:      #8B7FF0;
+  --accent-dim:        rgba(108, 92, 231, 0.20);
+  --scrollbar-color:   rgba(108, 92, 231, 0.40);
+}
+
+/* 3. Auto Repair — DinqShop */
+.theme-shop, .theme-auto {
+  --accent:            #3B82F6;
+  --accent-light:      #60A5FA;
+  --accent-dim:        rgba(59, 130, 246, 0.20);
+  --scrollbar-color:   rgba(59, 130, 246, 0.40);
+}
+
+/* 4. Home Care — DinqCare */
+.theme-care {
+  --accent:            #2E7D32;
+  --accent-light:      #4CAF50;
+  --accent-dim:        rgba(46, 125, 50, 0.20);
+  --scrollbar-color:   rgba(46, 125, 50, 0.40);
+}
+
+/* 5. Agency — DinqAgency */
+.theme-agency {
+  --accent:            #A67C52;
+  --accent-light:      #C49A70;
+  --accent-dim:        rgba(166, 124, 82, 0.20);
+  --scrollbar-color:   rgba(166, 124, 82, 0.40);
+}
+
+/* 6. Security — DinqGuard */
+.theme-guard {
+  --accent:            #06858E;
+  --accent-light:      #0AABB6;
+  --accent-dim:        rgba(6, 133, 142, 0.20);
+  --scrollbar-color:   rgba(6, 133, 142, 0.40);
+}
+
+/* 7. Factory / Manufacturing — DinqFactory */
+.theme-factory {
+  --accent:            #065F46;
+  --accent-light:      #10B981;
+  --accent-dim:        rgba(6, 95, 70, 0.20);
+  --scrollbar-color:   rgba(6, 95, 70, 0.40);
+}
+
+/* 8. Artist / Creative — DinqArtist */
+.theme-artist {
+  --accent:            #8B5CF6;
+  --accent-light:      #A78BFA;
+  --accent-dim:        rgba(139, 92, 246, 0.20);
+  --scrollbar-color:   rgba(139, 92, 246, 0.40);
+}
+
+/* 9. Files / Documents — DinqFile */
+.theme-file {
+  --accent:            #2383E2;
+  --accent-light:      #4BA3FF;
+  --accent-dim:        rgba(35, 131, 226, 0.20);
+  --scrollbar-color:   rgba(35, 131, 226, 0.40);
+}
+
+/* 10. Education — DinqLearn */
+.theme-learn {
+  --accent:            #171717;
+  --accent-light:      #333333;
+  --accent-dim:        rgba(23, 23, 23, 0.20);
+  --scrollbar-color:   rgba(23, 23, 23, 0.40);
+}
+
+/* 11. Ride / Transport — DinqRide */
+.theme-ride {
+  --accent:            #F5C518;
+  --accent-light:      #FFD740;
+  --accent-dim:        rgba(245, 197, 24, 0.20);
+  --scrollbar-color:   rgba(245, 197, 24, 0.40);
+}
+
+/* 12. Logistics — DinqLogix */
+.theme-logix {
+  --accent:            #0A2463;
+  --accent-light:      #1A3A8F;
+  --accent-dim:        rgba(10, 36, 99, 0.20);
+  --scrollbar-color:   rgba(10, 36, 99, 0.40);
+}
+
+/* 13. Payments — DinqPay */
+.theme-pay {
+  --accent:            #00D632;
+  --accent-light:      #33FF66;
+  --accent-dim:        rgba(0, 214, 50, 0.20);
+  --scrollbar-color:   rgba(0, 214, 50, 0.40);
+}
+
+/* 14. Delivery — DinqDrop */
+.theme-drop {
+  --accent:            #3A5BA0;
+  --accent-light:      #5A7BC0;
+  --accent-dim:        rgba(58, 91, 160, 0.20);
+  --scrollbar-color:   rgba(58, 91, 160, 0.40);
+}
+
+/* 15. Tours — DinqTour */
+.theme-tour {
+  --accent:            #34A85A;
+  --accent-light:      #4DC870;
+  --accent-dim:        rgba(52, 168, 90, 0.20);
+  --scrollbar-color:   rgba(52, 168, 90, 0.40);
+}
+
+/* 16. Stay / Hospitality — DinqStay */
+.theme-stay {
+  --accent:            #644A40;
+  --accent-light:      #8A6A60;
+  --accent-dim:        rgba(100, 74, 64, 0.20);
+  --scrollbar-color:   rgba(100, 74, 64, 0.40);
+}
+
+/* 17. Cleaning — DinqClean */
+.theme-clean {
+  --accent:            #8D9D4F;
+  --accent-light:      #ADBF6F;
+  --accent-dim:        rgba(141, 157, 79, 0.20);
+  --scrollbar-color:   rgba(141, 157, 79, 0.40);
+}
+
+/* 18. Style / Fashion — DinqStyle */
+.theme-style {
+  --accent:            #644A40;
+  --accent-light:      #8A6A60;
+  --accent-dim:        rgba(100, 74, 64, 0.20);
+  --scrollbar-color:   rgba(100, 74, 64, 0.40);
+}
+
+/* 19. Fitness / Gym — DinqFit */
+.theme-fit {
+  --accent:            #1E9DF1;
+  --accent-light:      #4DB8FF;
+  --accent-dim:        rgba(30, 157, 241, 0.20);
+  --scrollbar-color:   rgba(30, 157, 241, 0.40);
+}
+
+/* 20. Events — DinqEvents */
+.theme-events {
+  --accent:            #F59E0B;
+  --accent-light:      #FBBF24;
+  --accent-dim:        rgba(245, 158, 11, 0.20);
+  --scrollbar-color:   rgba(245, 158, 11, 0.40);
+}
+
+/* 21. Market / Retail — DinqMarket */
+.theme-market {
+  --accent:            #E85D04;
+  --accent-light:      #FF7A20;
+  --accent-dim:        rgba(232, 93, 4, 0.20);
+  --scrollbar-color:   rgba(232, 93, 4, 0.40);
+}
+
+/* 22. Construction — DinqBuild */
+.theme-build {
+  --accent:            #F5A623;
+  --accent-light:      #FFBE4D;
+  --accent-dim:        rgba(245, 166, 35, 0.20);
+  --scrollbar-color:   rgba(245, 166, 35, 0.40);
+}
+
+/* 23. Agriculture — DinqGrow */
+.theme-grow {
+  --accent:            #367C2B;
+  --accent-light:      #4CAF50;
+  --accent-dim:        rgba(54, 124, 43, 0.20);
+  --scrollbar-color:   rgba(54, 124, 43, 0.40);
+}
+
+/* 24. Gigs / Freelance — DinqGigs */
+.theme-gigs {
+  --accent:            #FF6B35;
+  --accent-light:      #FF8555;
+  --accent-dim:        rgba(255, 107, 53, 0.20);
+  --scrollbar-color:   rgba(255, 107, 53, 0.40);
+}
+
+/* 25. Health / Medical — DinqHealth */
+.theme-health {
+  --accent:            #0EA5E9;
+  --accent-light:      #38BDF8;
+  --accent-dim:        rgba(14, 165, 233, 0.20);
+  --scrollbar-color:   rgba(14, 165, 233, 0.40);
+}
+
+/* ── Glass utility classes ──────────────────────────────────
+   Use these in any template — works in plain HTML too
+   ────────────────────────────────────────────────────────── */
+.glass {
+  background:           var(--glass-bg);
+  backdrop-filter:      var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border:               1px solid var(--glass-border);
+  border-radius:        var(--radius-lg);
+}
+
+.glass-heavy {
+  background:           var(--dinq-modal);
+  backdrop-filter:      var(--glass-blur-heavy);
+  -webkit-backdrop-filter: var(--glass-blur-heavy);
+  border:               1px solid var(--glass-border-md);
+  border-radius:        var(--radius-xl);
+}
+
+.btn-primary {
+  background:    var(--accent);
+  color:         #ffffff;
+  border:        none;
+  border-radius: var(--radius-full);
+  padding:       12px 32px;
+  font-family:   var(--font-body);
+  font-weight:   600;
+  font-size:     14px;
+  cursor:        pointer;
+  transition:    all var(--duration-base) var(--ease-out);
+}
+
+.btn-primary:hover {
+  background: var(--accent-light);
+  transform:  translateY(-2px);
+}
+
+.input-glass {
+  background:    var(--glass-bg);
+  border:        1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  color:         var(--dinq-white);
+  padding:       12px 16px;
+  font-family:   var(--font-body);
+  font-size:     14px;
+  outline:       none;
+  transition:    border-color var(--duration-fast) ease;
+  width:         100%;
+}
+
+.input-glass::placeholder { color: var(--dinq-muted); }
+.input-glass:focus        { border-color: var(--accent); }
