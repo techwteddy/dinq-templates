@@ -1,0 +1,232 @@
+@import url('https://fonts.googleapis.com/css2?family=Anton&family=Roboto:ital,wght@0,100..900;1,100..900&display=swap');
+*{
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'roboto', serif;
+}
+
+.hero{
+    position: relative;
+    background-color: #825dd2;
+    height: 100vh;
+}
+.container{
+    width: 100%;
+    margin: 0 auto;
+}
+.hero::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 80%;
+  height: 100%;
+  background: radial-gradient(circle, #c9b5ff 0%, transparent 70%);
+  z-index: 1;
+  pointer-events: none;
+}
+header{
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 80px;
+    z-index: 1000;
+
+}
+header nav{
+    width: 80%;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 100%;
+}
+header nav .logo{
+    color: #fff;
+    text-decoration: none;
+    font-size: 40px;
+    letter-spacing: 2px;
+    font-family: 'Anton', serif;
+}
+header nav .nav_links{
+    display: flex;
+    gap: 40px;
+}
+header nav .nav_links a{
+    text-decoration: none;
+    font-family: 'Roboto';
+    color: #fff;
+    font-size: 20px;
+    font-weight: 500;
+    transition: 0.3;
+
+}
+header nav .nav_links a:hover{
+    color: #c4b1ee;
+}
+.hero .container{
+    position: relative;
+    width: 1005;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+}
+#cans{
+    position: absolute;
+    width: 35%;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+    transition: all cubic-bezier(0.19, 1, 0.22, 1) 0.5s;
+}
+#left{
+    position: absolute;
+    top: 60%;
+    left: 10%;
+    width: 12%;
+    transition: all cubic-bezier(0.19, 1, 0.22, 1) 0.5s;
+    z-index: 10;
+}
+#blackberry1{
+    position: absolute;
+    top: 40%;
+    left: 60%;
+    transform: translate(-50%, -50%);
+    width: 13vw;
+}
+#blackberry2{
+    position: absolute;
+    top: 65%;
+    left: 40%;
+    transform: translate(-50%, -50%);
+    width: 15vw;
+}
+#blackberry3{
+    position: absolute;
+    top: 35%;
+    left: 40%;
+    transform: translate(-50%, -50%);
+    width: 6vw;
+}
+#coconoutleaf{
+    position: absolute;
+    top: 10%;
+    right: 0%;
+    width: 20%;
+}
+.hero h1{
+    font-size: 28vw;
+    color: #fff;
+    font-weight: 900;
+    letter-spacing: 10px;
+    font-family: 'Anton', serif;
+    text-transform: uppercase;
+    font-size: clamp(12vw, 28vw, 400px); 
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 0.85;   
+    position: relative;
+    z-index: 0;          
+}
+
+.about{
+    padding: 100px;
+    height: 100vh;
+}
+.about .text{
+    width: 50%;
+}
+.about .text h2{
+    font-size: 3.5vw;
+    color: #0d071c;
+    text-transform: capitalize;
+    position: relative;
+    z-index: 20;
+    font-family: 'Roboto';
+}
+.about .text h2 span{
+    color: #825dd2;
+}
+.about .text .boxs {
+  display: flex;
+  gap: 40px;              
+  margin-top: 40px;
+  margin-bottom: 60px;
+}
+
+.about .text .boxs .box {
+  flex: 1;
+}
+
+.about .text .boxs .box img {
+  width: 40px;
+  rotate: 50deg;
+  display: block;
+  margin-bottom: 16px;
+}
+
+.about .text .boxs .box h4 {
+  color: #0d071c;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-bottom: 10px;
+  width: auto;            
+}
+
+.about .text .boxs .box p {
+  color: #303031;
+  font-size: 0.9rem;
+  font-weight: 300;
+  line-height: 1.6;
+}
+.about .text .btn{
+    padding: 15px 45px;
+    font-size: 18px;
+    border: 1.8px solid #825dd2;
+    background: #825dd2;
+    color: #fff;
+    text-decoration: none;
+    font-weight: bold;
+    border-radius: 30px;
+    transition: 0.3s;
+}
+.about .text .btn:hover{
+    background: transparent;
+    color: #825dd2;
+}
+.stand{
+    height: 85vh;
+    background: #bd9fff;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-top: 130px;
+}
+.stand .container{
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    overflow: hidden;
+}
+.stand img{
+    width: 55%;
+}
+.stand h3{
+    position: absolute;
+    top: 0%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 26vh;
+    text-transform: uppercase;
+    font-family: 'Anton', serif;
+    color: #825dd2;
+    letter-spacing: 7px;
+}
