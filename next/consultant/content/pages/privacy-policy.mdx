@@ -1,0 +1,72 @@
+---
+title: "Privacy Policy"
+date: "2026-04-28"
+description: "How Famous Sheamus Consulting handles your data with absolute privacy and compliance."
+published: true
+---
+
+<script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": "Privacy Policy",
+  "mainEntity": {
+    "@type": "PrivacyPolicy",
+    "name": "Famous Sheamus Consulting Privacy Policy",
+    "publisher": {
+      "@type": "ProfessionalService",
+      "name": "Famous Sheamus Consulting",
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Dallas",
+        "addressRegion": "TX"
+      },
+      "founder": {
+        "@type": "Person",
+        "name": "Sheamus",
+        "jobTitle": ["Fractional CTO", "Automation Strategist"]
+      }
+    },
+    "about": [
+      {"@type": "Legislation", "name": "Texas Data Privacy and Security Act (TDPSA)", "url": "https://www.wikidata.org/wiki/Q119842602"},
+      {"@type": "Legislation", "name": "Texas Responsible AI Governance Act (TRAIGA)"}
+    ]
+  }
+})}} />
+
+<Callout>
+  **Plain English TL;DR:** We believe in scaling revenue, not chaos, which means keeping your data strictly under your control. Famous Sheamus Consulting operates on a "No New Software" philosophy, meaning all automation occurs within your existing tech stack using zero-retention processing. We never use your business data to train public AI models, and we comply fully with Texas data privacy and AI transparency laws.
+</Callout>
+
+<div className="prose prose-teal max-w-none bg-canvas">
+
+## How does Famous Sheamus protect my business data?
+
+We operate fundamentally differently from standard SaaS providers. Because our core philosophy is "No New Software," we do not host, store, or warehouse your customer data. Instead, we architect solutions using tools like n8n and Vapi that live within your own infrastructure or operate in strict "Zero-Retention" mode. This means data passes through our automated workflows to execute a task but is never saved or used to train external or public Generative AI models.
+
+## What AI technologies do you use, and how are they transparent?
+
+In accordance with the Texas Responsible AI Governance Act (TRAIGA), we are fully transparent about our use of artificial intelligence. We deploy **Agentic AI** exclusively for lead capture and workflow orchestration. Additionally, we utilize **Voice AI** to handle automated appointment scheduling. In every instance where an individual interacts with our Voice AI or Agentic AI systems, they will be clearly notified that they are speaking with an automated assistant.
+
+## Do you comply with TCPA and automated voice regulations?
+
+Yes. Before any automated voice interaction is initiated via our Voice AI systems, we require "Prior Express Written Consent" as mandated by the Telephone Consumer Protection Act (TCPA). Our architectures are designed to ensure your business captures and records this consent securely before any outbound AI call is triggered.
+
+## How long is my data retained by third-party processors?
+
+While we architect the systems, the actual processing utilizes established APIs. We configure these connections to minimize data exposure. Here is how our primary third-party processors handle your data under our architectural guidelines:
+
+| Processor | Function | Data Retention Policy |
+| :--- | :--- | :--- |
+| [OpenAI (API)](https://openai.com/enterprise-privacy) | LLM Inference | Zero Data Retention (Opted out of training) |
+| [Anthropic (API)](https://www.anthropic.com/legal/commercial-terms) | LLM Inference | Zero Data Retention (Standard for API Customers) |
+| [Google (API)](https://cloud.google.com/vertex-ai/docs/generative-ai/data-governance) | LLM Inference | Zero Data Retention (Enterprise Vertex AI Tier) |
+| [xAI (API)](https://x.ai/privacy) | LLM Inference | Zero Data Retention (ZDR Mode active) |
+| [n8n](https://n8n.io/privacy/) | Workflow Orchestration | Temporary execution logs (Auto-purged in 24h) |
+| [Vapi](https://vapi.ai/privacy) | Voice AI Infrastructure | Ephemeral call processing (Recordings strictly local) |
+
+
+## What are my rights under the Texas Data Privacy and Security Act (TDPSA)?
+
+As a Texas-based consultancy, we strictly adhere to the TDPSA. You have the right to confirm whether we are processing your personal data, the right to access that data, and the right to request its deletion. Because we process data in your own stack, any requests for data deletion from our temporary diagnostic logs are honored immediately. We do not sell personal data, nor do we process it for targeted advertising without explicit consent.
+
+</div>

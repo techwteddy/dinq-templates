@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #ffffff;
+  --foreground: #020817;
+  --border: #e2e8f0;
+}
+
+.dark {
+  --background: #09090b;
+  --foreground: #f8fafc;
+  --border: #1e293b;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+.bg-dot-grid {
+  background-image: radial-gradient(circle, #cbd5e1 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.dark .bg-dot-grid {
+  background-image: radial-gradient(circle, #334155 1px, transparent 1px);
+}
+
+.vignette {
+  box-shadow: inset 0 0 150px rgba(59, 130, 246, 0.05);
+}
+
+.dark .vignette {
+  box-shadow: inset 0 0 150px rgba(59, 130, 246, 0.1);
+}
+
+.bg-canvas {
+  background-color: #ffffff;
+  background-image: radial-gradient(#9bb0d1 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.dark .bg-canvas {
+  background-color: #09090b;
+  background-image: radial-gradient(#131414 1px, transparent 1px);
+}
+
+.bg-canvas-dark {
+  background-color: #09090b;
+}
+
+:root {
+  --brand-color: #3b82f6;
+  --accent-color: #60a5fa;
+}
