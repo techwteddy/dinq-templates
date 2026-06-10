@@ -1,0 +1,253 @@
+I uploaded a full advanced website SOP system. Use ALL uploaded files together, not just one or two.
+
+Your job is to build a website that looks, moves, and interacts better than the example HTML files I uploaded:
+- `glitch-creative-agency.html`
+- `immersive-scroll-storytelling.html`
+- `index(5).html`
+
+Use the files as a complete system:
+- Use `SKILLS-INDEX.md` to choose the correct SOP stack.
+- Use `HOW-TO-BUILD-ADVANCED-SITES.md` for the advanced website structure.
+- Use `BACKGROUND-SYSTEMS.md` to select the best immersive background.
+- Use all Three.js/WebGL SOPs for the background, scene setup, geometry, lighting, materials, textures, animation, interaction, shaders, GLSL, and post-processing.
+- Use all design/UI SOPs for premium visual design, emotional direction, design taste, micro-interactions, dark UI, brutalist/industrial options, antigravity depth, canvas art direction, component variation, and motion quality.
+- Use `fixing-motion-performance.md` as the final QA pass.
+
+Build this site:
+
+## 1. Business / Website Type
+[EXAMPLE: roofing company, drone real estate business, restaurant, clothing brand, gym, local repair shop, AI agency, SaaS product, music artist, sports team, nonprofit, etc.]
+
+## 2. Business Name
+[BUSINESS NAME]
+
+## 3. Main Goal of the Website
+[EXAMPLE: get calls, collect leads, sell products, book appointments, show portfolio, get donations, get reservations, build trust, explain services, etc.]
+
+## 4. Target Audience
+[EXAMPLE: homeowners, local businesses, athletes, luxury buyers, teenagers, parents, real estate agents, restaurant customers, small business owners, etc.]
+
+## 5. Desired Emotion
+Choose or describe:
+- Premium
+- Trustworthy
+- Aggressive
+- Calm
+- Futuristic
+- Warm
+- Luxury
+- Cyberpunk
+- Organic
+- Industrial
+- High-energy
+- Clean and minimal
+- Dark and cinematic
+- Other: [DESCRIBE]
+
+My desired emotion is:
+[DESIRED EMOTION]
+
+## 6. Visual Style Direction
+Choose one or combine carefully:
+- Immersive Dark Scroll
+- Glitch Cyberpunk
+- Luxury Minimal
+- Nature Organic
+- Tech Futurist
+- Industrial Brutalist
+- Antigravity Glassmorphism
+- Dark SaaS Dashboard
+- Editorial Luxury
+- Custom: [DESCRIBE]
+
+My visual style is:
+[VISUAL STYLE]
+
+## 7. Brand Colors
+Primary color:
+[HEX OR “derive from industry”]
+
+Secondary/accent color:
+[HEX OR “derive from industry”]
+
+Background color/tone:
+[HEX OR “dark/light/mixed/derive from industry”]
+
+Colors to avoid:
+[COLORS TO AVOID]
+
+## 8. Typography Feel
+Choose:
+- Premium sans
+- Editorial serif
+- Monospace/terminal
+- Mixed serif + sans
+- Aggressive bold
+- Soft modern
+- Luxury thin
+- Other: [DESCRIBE]
+
+Typography feel:
+[TYPOGRAPHY FEEL]
+
+## 9. Background System
+Choose one or let Claude pick from `BACKGROUND-SYSTEMS.md`:
+- Energy Helix
+- Particle Storm Sphere
+- Node/Connection Graph
+- Organic Floating Particles
+- Atmospheric Dust/Orbs
+- Audio/Waveform Visualizer
+- Spline 3D placeholder
+- Claude should choose the best one
+
+My background choice:
+[BACKGROUND CHOICE]
+
+The background should react to:
+- Mouse movement
+- Scroll progress
+- Hover states
+- Click shockwave
+- Subtle idle motion
+- Other: [DESCRIBE]
+
+Reaction behavior:
+[REACTION BEHAVIOR]
+
+## 10. Required Sections
+Include these sections:
+[LIST SECTIONS]
+
+Example:
+- Hero
+- About/story
+- Services
+- Portfolio/work
+- Stats/social proof
+- Process
+- Testimonials
+- Pricing
+- FAQ
+- Contact form
+- Final CTA
+- Footer
+
+## 11. Hero Section
+Headline idea:
+[HEADLINE OR “write a cinematic headline for me”]
+
+Subheadline idea:
+[SUBHEADLINE OR “write one for me”]
+
+Hero layout preference:
+[split layout / left-aligned / asymmetric / terminal panel / bento / full-screen typography / let Claude choose]
+
+## 12. Services / Offers
+List my services or offers:
+[PASTE SERVICES]
+
+If I do not provide enough, create realistic placeholder services for this business type.
+
+## 13. Contact / CTA Info
+Primary call-to-action:
+[EXAMPLE: Call Now, Book a Free Estimate, Schedule a Demo, Get a Quote, Reserve a Table, Shop Now]
+
+Contact method:
+[phone/email/form/booking link/etc.]
+
+Phone:
+[PHONE OR LEAVE BLANK]
+
+Email:
+[EMAIL OR LEAVE BLANK]
+
+Location/service area:
+[LOCATION OR SERVICE AREA]
+
+## 14. Interaction Requirements
+The site must include:
+- Custom cursor
+- Scroll progress indicator or side navigation
+- Scroll-triggered reveals using IntersectionObserver
+- At least one marquee/ticker strip
+- Interactive cards, panels, or rows
+- Magnetic or physical-feeling buttons
+- Polished form focus states
+- Mobile-friendly interactions
+
+Add these extra interactions:
+[OPTIONAL INTERACTIONS]
+
+## 15. Motion Requirements
+Use premium motion:
+- Staggered hero entrance
+- Section reveal choreography
+- Hover transforms
+- Button icon motion
+- Background idle animation
+- Background mouse/scroll reaction
+- Reduced-motion fallback
+
+Motion style:
+[cinematic / subtle / aggressive / smooth luxury / glitchy / organic / futuristic / let Claude choose]
+
+## 16. Layout Rules
+Follow these:
+- Do not use a generic centered hero with two buttons as the main design.
+- Do not repeat the same card layout in multiple sections.
+- Do not use static gradient blobs as the main background.
+- Do not make it look like a basic template.
+- Every section must have a different structure.
+- Make the design feel custom to this business.
+
+Extra layout rules:
+[OPTIONAL]
+
+## 17. Technical Output
+Choose one:
+
+A. Single self-contained HTML/CSS/JS file  
+B. React + Tailwind component  
+C. Next.js page  
+D. Google Stitch DESIGN.md  
+E. Upgrade my existing HTML  
+F. Other: [DESCRIBE]
+
+My output format:
+[OUTPUT FORMAT]
+
+## 18. External Dependencies
+Allowed dependencies:
+- Three.js CDN
+- GSAP CDN
+- Anime.js CDN
+- Google Fonts
+- No dependencies except vanilla HTML/CSS/JS
+- Other: [DESCRIBE]
+
+Allowed dependencies:
+[DEPENDENCIES]
+
+## 19. Mobile / Performance Requirements
+Must include:
+- Responsive mobile layout
+- No horizontal overflow
+- Touch targets at least 44px
+- `min-height: 100dvh` instead of `h-screen`
+- Reduced motion support
+- Canvas performance fallback for mobile
+- Transform/opacity animations when possible
+- No scroll jank
+
+## 20. Final QA Requirement
+Before finishing, verify:
+1. Every uploaded file was used in the design/build process.
+2. The result looks better than the uploaded HTML demos.
+3. The result moves better than the uploaded HTML demos.
+4. The result interacts better than the uploaded HTML demos.
+5. The background matches the business and brand.
+6. The site feels custom, premium, and non-generic.
+7. Mobile and performance are handled.
+
+Now build the final result.

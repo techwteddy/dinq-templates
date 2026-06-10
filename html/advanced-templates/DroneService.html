@@ -1,0 +1,2136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SkyFrame — Aerial Cinematography & Drone Real Estate</title>
+<meta name="description" content="Professional drone cinematography and aerial real estate photography. FAA Part 107 certified. 4K footage delivered in 48 hours." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<style>
+/* ============================================================
+   RESET & BASE
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  background: #080c14;
+  color: #f1f5f9;
+  overflow-x: hidden;
+  cursor: none;
+}
+
+/* ============================================================
+   CUSTOM CURSOR
+   ============================================================ */
+#cursor-dot {
+  position: fixed;
+  width: 7px; height: 7px;
+  background: #0ea5e9;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9999;
+  transform: translate(-50%, -50%);
+  transition: width 0.3s ease, height 0.3s ease, background 0.3s ease;
+  will-change: transform;
+}
+#cursor-ring {
+  position: fixed;
+  width: 36px; height: 36px;
+  border: 1.5px solid rgba(14, 165, 233, 0.45);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9998;
+  transform: translate(-50%, -50%);
+  transition: width 0.45s cubic-bezier(0.32,0.72,0,1), height 0.45s cubic-bezier(0.32,0.72,0,1), border-color 0.3s ease;
+  will-change: transform;
+}
+body.hovering #cursor-dot { width: 11px; height: 11px; background: #f59e0b; }
+body.hovering #cursor-ring { width: 54px; height: 54px; border-color: rgba(245,158,11,0.35); }
+
+/* ============================================================
+   THREE.JS BG CANVAS
+   ============================================================ */
+#three-bg {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ============================================================
+   NOISE OVERLAY (fixed, pointer-events none — performance safe)
+   ============================================================ */
+#noise-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.032;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+
+/* ============================================================
+   CONTENT LAYERS (all content above bg)
+   ============================================================ */
+nav, section, footer, .marquee-wrap, .scroll-progress { position: relative; z-index: 10; }
+
+/* ============================================================
+   SCROLL PROGRESS INDICATOR
+   ============================================================ */
+.scroll-progress {
+  position: fixed;
+  right: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  z-index: 100;
+}
+.scroll-dot {
+  width: 5px; height: 5px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.18);
+  transition: all 0.45s cubic-bezier(0.32,0.72,0,1);
+  cursor: pointer;
+}
+.scroll-dot.active {
+  background: #0ea5e9;
+  height: 22px;
+}
+
+/* ============================================================
+   NAVIGATION — floating glass pill
+   ============================================================ */
+nav {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  width: calc(100% - 32px);
+  max-width: 1100px;
+}
+.nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 22px;
+  background: rgba(8,12,20,0.72);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 999px;
+}
+.nav-logo {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: -0.02em;
+  color: #f8fafc;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.logo-dot {
+  width: 8px; height: 8px;
+  background: #0ea5e9;
+  border-radius: 50%;
+  animation: pulse-glow 2.2s ease-in-out infinite;
+}
+@keyframes pulse-glow {
+  0%,100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(14,165,233,0.5); }
+  50% { transform: scale(1.35); box-shadow: 0 0 0 4px rgba(14,165,233,0); }
+}
+.nav-links { display: flex; gap: 28px; list-style: none; }
+.nav-links a {
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: rgba(241,245,249,0.6);
+  text-decoration: none;
+  letter-spacing: 0.015em;
+  transition: color 0.3s ease;
+}
+.nav-links a:hover { color: #f8fafc; }
+.nav-cta {
+  padding: 9px 20px;
+  background: #0ea5e9;
+  color: #080c14;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-decoration: none;
+  border-radius: 999px;
+  clip-path: polygon(8px 0%,100% 0%,calc(100% - 8px) 100%,0% 100%);
+  transition: all 0.4s cubic-bezier(0.32,0.72,0,1);
+}
+.nav-cta:hover { background: #f59e0b; transform: scale(1.04); }
+
+/* ============================================================
+   HERO SECTION
+   ============================================================ */
+#hero {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  padding: 130px 5% 90px;
+  max-width: 1380px;
+  margin: 0 auto;
+}
+.hero-content {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 64px;
+  align-items: center;
+  width: 100%;
+}
+
+/* Hero left */
+.hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 15px 6px 9px;
+  background: rgba(14,165,233,0.09);
+  border: 1px solid rgba(14,165,233,0.22);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+  margin-bottom: 30px;
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.8s cubic-bezier(0.32,0.72,0,1) 0.1s, transform 0.8s cubic-bezier(0.32,0.72,0,1) 0.1s;
+}
+.hero-eyebrow.visible { opacity: 1; transform: translateY(0); }
+.live-dot {
+  width: 6px; height: 6px;
+  background: #22c55e;
+  border-radius: 50%;
+  animation: pulse-glow 1.6s ease-in-out infinite;
+}
+.hero-h1 {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 900;
+  font-size: clamp(3.4rem, 7.5vw, 7rem);
+  line-height: 0.9;
+  letter-spacing: -0.045em;
+  color: #f8fafc;
+  margin-bottom: 30px;
+  opacity: 0;
+  transform: translateY(32px);
+  filter: blur(8px);
+  transition: opacity 0.9s cubic-bezier(0.32,0.72,0,1) 0.22s, transform 0.9s cubic-bezier(0.32,0.72,0,1) 0.22s, filter 0.9s ease 0.22s;
+}
+.hero-h1.visible { opacity: 1; transform: translateY(0); filter: blur(0); }
+.hero-h1 .sky-word {
+  display: block;
+  background: linear-gradient(125deg, #38bdf8 0%, #0ea5e9 40%, #f59e0b 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-sub {
+  font-size: 1.02rem;
+  line-height: 1.72;
+  color: rgba(241,245,249,0.58);
+  max-width: 430px;
+  margin-bottom: 46px;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.8s cubic-bezier(0.32,0.72,0,1) 0.38s, transform 0.8s cubic-bezier(0.32,0.72,0,1) 0.38s;
+}
+.hero-sub.visible { opacity: 1; transform: translateY(0); }
+.hero-ctas {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity 0.8s cubic-bezier(0.32,0.72,0,1) 0.52s, transform 0.8s cubic-bezier(0.32,0.72,0,1) 0.52s;
+}
+.hero-ctas.visible { opacity: 1; transform: translateY(0); }
+
+/* Buttons */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 26px;
+  background: #0ea5e9;
+  color: #080c14;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 0.88rem;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  clip-path: polygon(10px 0%,100% 0%,calc(100% - 10px) 100%,0% 100%);
+  transition: all 0.4s cubic-bezier(0.32,0.72,0,1);
+  will-change: transform;
+}
+.btn-primary:hover { background: #f59e0b; transform: translateY(-3px); }
+.btn-icon {
+  width: 26px; height: 26px;
+  background: rgba(0,0,0,0.14);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.88rem;
+  transition: transform 0.35s cubic-bezier(0.32,0.72,0,1);
+}
+.btn-primary:hover .btn-icon { transform: translate(3px, -3px) scale(1.15); }
+.btn-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 15px 22px;
+  color: rgba(241,245,249,0.68);
+  font-size: 0.88rem;
+  font-weight: 500;
+  text-decoration: none;
+  border: 1px solid rgba(255,255,255,0.12);
+  clip-path: polygon(10px 0%,100% 0%,calc(100% - 10px) 100%,0% 100%);
+  transition: all 0.4s cubic-bezier(0.32,0.72,0,1);
+}
+.btn-outline:hover { color: #f8fafc; border-color: rgba(255,255,255,0.3); transform: translateY(-3px); }
+
+/* Hero right — stat cards */
+.hero-right {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  opacity: 0;
+  transform: translateX(44px);
+  transition: opacity 1s cubic-bezier(0.32,0.72,0,1) 0.45s, transform 1s cubic-bezier(0.32,0.72,0,1) 0.45s;
+}
+.hero-right.visible { opacity: 1; transform: translateX(0); }
+
+/* Double-bezel stat card */
+.stat-card {
+  padding: 2px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 22px;
+  overflow: hidden;
+  transition: border-color 0.4s ease, background 0.4s ease;
+}
+.stat-card:hover { border-color: rgba(14,165,233,0.28); background: rgba(14,165,233,0.05); }
+.stat-card-inner {
+  padding: 20px 24px;
+  background: rgba(8,12,20,0.82);
+  border-radius: 20px;
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.06);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.stat-icon {
+  width: 46px; height: 46px;
+  background: rgba(14,165,233,0.1);
+  border: 1px solid rgba(14,165,233,0.18);
+  border-radius: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  flex-shrink: 0;
+}
+.stat-num {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 800;
+  font-size: 1.75rem;
+  letter-spacing: -0.03em;
+  color: #f8fafc;
+  line-height: 1;
+}
+.stat-label {
+  font-size: 0.76rem;
+  color: rgba(241,245,249,0.45);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 500;
+  margin-top: 3px;
+}
+
+/* ============================================================
+   MARQUEE STRIP
+   ============================================================ */
+.marquee-wrap {
+  border-top: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  background: rgba(14,165,233,0.03);
+  overflow: hidden;
+  padding: 13px 0;
+}
+.marquee-track {
+  display: flex;
+  animation: marquee-scroll 32s linear infinite;
+  width: max-content;
+}
+.marquee-item {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 26px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.19em;
+  text-transform: uppercase;
+  color: rgba(241,245,249,0.35);
+  white-space: nowrap;
+}
+.marquee-sep {
+  width: 4px; height: 4px;
+  background: #0ea5e9;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+@keyframes marquee-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* ============================================================
+   SECTION COMMON
+   ============================================================ */
+.section-container { max-width: 1280px; margin: 0 auto; padding: 0 5%; }
+
+.section-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 13px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: rgba(241,245,249,0.45);
+  margin-bottom: 18px;
+}
+.eyebrow-num { font-family: 'Outfit', monospace; color: #0ea5e9; }
+
+.section-h2 {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 800;
+  font-size: clamp(2.2rem, 4.5vw, 3.8rem);
+  letter-spacing: -0.03em;
+  line-height: 1.04;
+  color: #f8fafc;
+  margin-bottom: 16px;
+}
+.section-lead {
+  font-size: 1rem;
+  line-height: 1.72;
+  color: rgba(241,245,249,0.52);
+  max-width: 460px;
+}
+
+/* Scroll reveal base — GPU-safe only transform + opacity */
+.reveal {
+  opacity: 0;
+  transform: translateY(38px);
+  transition: opacity 0.9s cubic-bezier(0.32,0.72,0,1), transform 0.9s cubic-bezier(0.32,0.72,0,1);
+  will-change: transform, opacity;
+}
+.reveal.visible { opacity: 1; transform: translateY(0); }
+.delay-1 { transition-delay: 0.1s; }
+.delay-2 { transition-delay: 0.2s; }
+.delay-3 { transition-delay: 0.3s; }
+.delay-4 { transition-delay: 0.4s; }
+.delay-5 { transition-delay: 0.5s; }
+
+/* ============================================================
+   SERVICES SECTION
+   ============================================================ */
+#services { padding: 120px 0; }
+.services-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 56px;
+  gap: 40px;
+  flex-wrap: wrap;
+}
+/* Asymmetric bento grid */
+.services-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 14px;
+}
+
+/* Double-bezel service card */
+.service-card {
+  padding: 2px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 26px;
+  overflow: hidden;
+  transition: border-color 0.5s cubic-bezier(0.32,0.72,0,1), background 0.5s ease, transform 0.5s cubic-bezier(0.32,0.72,0,1);
+  cursor: default;
+}
+.service-card:hover {
+  border-color: rgba(14,165,233,0.28);
+  background: rgba(14,165,233,0.05);
+  transform: translateY(-5px);
+}
+.service-card-inner {
+  padding: 38px 32px;
+  background: rgba(8,12,20,0.86);
+  border-radius: 24px;
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.05);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.service-card.featured .service-card-inner {
+  padding: 46px 38px;
+  background: linear-gradient(145deg, rgba(14,165,233,0.09) 0%, rgba(8,12,20,0.92) 100%);
+}
+.service-icon { font-size: 2.1rem; margin-bottom: 22px; display: block; }
+.service-num {
+  font-family: 'Outfit', monospace;
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: #0ea5e9;
+  margin-bottom: 11px;
+}
+.service-title {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 1.3rem;
+  letter-spacing: -0.02em;
+  color: #f8fafc;
+  margin-bottom: 13px;
+  line-height: 1.22;
+}
+.service-desc {
+  font-size: 0.875rem;
+  line-height: 1.67;
+  color: rgba(241,245,249,0.48);
+  flex: 1;
+  margin-bottom: 22px;
+}
+.service-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 22px;
+}
+.service-tag {
+  padding: 4px 11px;
+  background: rgba(14,165,233,0.08);
+  border: 1px solid rgba(14,165,233,0.2);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #7dd3fc;
+}
+.service-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  color: #0ea5e9;
+  text-decoration: none;
+  text-transform: uppercase;
+  transition: gap 0.35s cubic-bezier(0.32,0.72,0,1);
+}
+.service-link:hover { gap: 16px; }
+
+/* ============================================================
+   PORTFOLIO SECTION — Expandable flex panels
+   ============================================================ */
+#portfolio {
+  padding: 120px 0;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  background: rgba(255,255,255,0.008);
+}
+.portfolio-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 52px;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+.portfolio-panels {
+  display: flex;
+  gap: 10px;
+  height: 490px;
+}
+.portfolio-panel {
+  flex: 1;
+  border-radius: 20px;
+  overflow: hidden;
+  position: relative;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.07);
+  transition: flex 0.72s cubic-bezier(0.32,0.72,0,1), border-color 0.4s ease;
+}
+.portfolio-panel:hover { flex: 3.8; border-color: rgba(14,165,233,0.3); }
+
+.panel-bg {
+  position: absolute;
+  inset: 0;
+  transition: transform 0.72s cubic-bezier(0.32,0.72,0,1);
+}
+.portfolio-panel:hover .panel-bg { transform: scale(1.05); }
+
+/* Cinematic gradient placeholders simulating aerial shots */
+.panel-bg-1 { background: linear-gradient(150deg,#071e38 0%,#0369a1 45%,#0c1a2e 80%,#0f4c75 100%); }
+.panel-bg-2 { background: linear-gradient(165deg,#190430 0%,#4c1d95 45%,#0f0a1e 75%,#2e1065 100%); }
+.panel-bg-3 { background: linear-gradient(140deg,#1c1005 0%,#92400e 42%,#0f0d06 75%,#78350f 100%); }
+.panel-bg-4 { background: linear-gradient(155deg,#0f1e2c 0%,#1e3a43 45%,#2c5364 70%,#0a1620 100%); }
+.panel-bg-5 { background: linear-gradient(145deg,#081430 0%,#1e3a8a 48%,#0a1020 75%,#1e40af 100%); }
+
+/* Aerial grid overlay — evokes map/satellite view */
+.panel-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+.portfolio-panel:hover .panel-grid { opacity: 1; }
+
+.panel-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.88) 0%, transparent 55%);
+}
+.panel-content {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 26px;
+  transform: translateY(6px);
+  transition: transform 0.5s cubic-bezier(0.32,0.72,0,1);
+}
+.portfolio-panel:hover .panel-content { transform: translateY(0); }
+
+.panel-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #0ea5e9;
+  margin-bottom: 8px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.4s ease 0.12s, transform 0.4s ease 0.12s;
+}
+.portfolio-panel:hover .panel-badge { opacity: 1; transform: translateY(0); }
+.panel-title {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 1.02rem;
+  color: #f8fafc;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.panel-price {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  font-size: 0.83rem;
+  color: #f59e0b;
+  margin-top: 5px;
+  opacity: 0;
+  transition: opacity 0.4s ease 0.18s;
+}
+.portfolio-panel:hover .panel-price { opacity: 1; }
+
+.panel-drone-badge {
+  position: absolute;
+  top: 18px; right: 18px;
+  padding: 6px 12px;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.13);
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.75);
+  opacity: 0;
+  transform: scale(0.85) translateY(-4px);
+  transition: all 0.45s cubic-bezier(0.32,0.72,0,1) 0.06s;
+  white-space: nowrap;
+}
+.portfolio-panel:hover .panel-drone-badge { opacity: 1; transform: scale(1) translateY(0); }
+
+/* ============================================================
+   STATS BAR
+   ============================================================ */
+#stats { padding: 80px 0; }
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+}
+.stat-block {
+  padding: 2px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.stat-block:first-child { border-radius: 18px 0 0 18px; }
+.stat-block:last-child  { border-radius: 0 18px 18px 0; }
+.stat-block-inner {
+  padding: 38px 30px;
+  background: rgba(8,12,20,0.6);
+  height: 100%;
+}
+.stat-big {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 900;
+  font-size: clamp(2.6rem, 4vw, 4rem);
+  letter-spacing: -0.04em;
+  color: #f8fafc;
+  line-height: 1;
+  margin-bottom: 9px;
+}
+.stat-big .accent { color: #0ea5e9; }
+.stat-desc {
+  font-size: 0.8rem;
+  color: rgba(241,245,249,0.42);
+  line-height: 1.55;
+}
+
+/* ============================================================
+   PROCESS SECTION
+   ============================================================ */
+#process { padding: 120px 0; }
+.process-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 90px;
+  align-items: start;
+}
+.process-sticky { position: sticky; top: 110px; }
+.process-visual {
+  margin-top: 44px;
+  padding: 2px;
+  background: rgba(14,165,233,0.1);
+  border: 1px solid rgba(14,165,233,0.2);
+  border-radius: 20px;
+  display: inline-block;
+}
+.process-visual-inner {
+  padding: 22px 26px;
+  background: rgba(8,12,20,0.82);
+  border-radius: 18px;
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.06);
+}
+.process-visual-title {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  color: #f8fafc;
+}
+.process-visual-sub {
+  font-size: 0.8rem;
+  color: rgba(241,245,249,0.45);
+  margin-top: 4px;
+}
+
+.process-steps { display: flex; flex-direction: column; }
+.process-step {
+  padding: 30px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.055);
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 22px;
+  align-items: start;
+  cursor: pointer;
+  transition: all 0.4s ease;
+}
+.process-step:first-child { padding-top: 0; }
+.step-num {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 800;
+  font-size: 0.78rem;
+  color: rgba(14,165,233,0.38);
+  letter-spacing: 0.08em;
+  padding-top: 4px;
+  transition: color 0.35s ease;
+}
+.process-step:hover .step-num,
+.process-step.active .step-num { color: #0ea5e9; }
+.step-title {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+  color: rgba(241,245,249,0.45);
+  margin-bottom: 0;
+  transition: color 0.35s ease;
+}
+.process-step:hover .step-title,
+.process-step.active .step-title { color: #f8fafc; }
+.step-desc {
+  font-size: 0.865rem;
+  line-height: 1.68;
+  color: rgba(241,245,249,0.42);
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.55s cubic-bezier(0.32,0.72,0,1), margin-top 0.3s ease, color 0.3s ease;
+}
+.process-step.active .step-desc {
+  max-height: 220px;
+  margin-top: 12px;
+  color: rgba(241,245,249,0.55);
+}
+
+/* ============================================================
+   TESTIMONIAL SECTION
+   ============================================================ */
+#testimonials {
+  padding: 120px 0;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  overflow: hidden;
+  text-align: center;
+}
+.star-row {
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+  margin-bottom: 34px;
+  color: #f59e0b;
+  font-size: 1.15rem;
+}
+.testimonial-quote {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: clamp(1.5rem, 3.2vw, 2.6rem);
+  letter-spacing: -0.025em;
+  line-height: 1.32;
+  color: #f8fafc;
+  max-width: 880px;
+  margin: 0 auto 40px;
+}
+.testimonial-quote .highlight { color: #0ea5e9; }
+.testimonial-author {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.author-avatar {
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  background: linear-gradient(135deg,#0ea5e9,#f59e0b);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #080c14;
+  flex-shrink: 0;
+}
+.author-name { font-weight: 600; font-size: 0.9rem; color: #f8fafc; }
+.author-role { font-size: 0.76rem; color: rgba(241,245,249,0.42); margin-top: 2px; }
+
+/* ============================================================
+   CONTACT / CTA SECTION
+   ============================================================ */
+#contact {
+  padding: 120px 0;
+  background: rgba(14,165,233,0.025);
+  border-top: 1px solid rgba(14,165,233,0.08);
+}
+.contact-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 80px;
+  align-items: center;
+}
+.contact-details { display: flex; flex-direction: column; gap: 14px; margin-top: 34px; }
+.contact-detail {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 20px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 14px;
+  transition: border-color 0.35s ease, background 0.35s ease;
+}
+.contact-detail:hover { border-color: rgba(14,165,233,0.22); background: rgba(14,165,233,0.04); }
+.detail-icon {
+  width: 38px; height: 38px;
+  background: rgba(14,165,233,0.1);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+.detail-label { font-size: 0.73rem; color: rgba(241,245,249,0.4); }
+.detail-value { font-weight: 600; font-size: 0.88rem; color: #f8fafc; margin-top: 1px; }
+
+/* Double-bezel contact form */
+.contact-form-shell {
+  padding: 2px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 30px;
+}
+.contact-form-inner {
+  padding: 42px 38px;
+  background: rgba(8,12,20,0.92);
+  border-radius: 28px;
+  box-shadow: inset 0 1px 1px rgba(255,255,255,0.055);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.form-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: rgba(241,245,249,0.4);
+  margin-bottom: 7px;
+}
+.form-input {
+  width: 100%;
+  padding: 13px 16px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 11px;
+  color: #f8fafc;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.35s ease, background 0.35s ease;
+  -webkit-appearance: none;
+}
+.form-input:focus {
+  border-color: rgba(14,165,233,0.48);
+  background: rgba(14,165,233,0.04);
+}
+.form-input::placeholder { color: rgba(241,245,249,0.22); }
+select.form-input option { background: #0f172a; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.btn-submit {
+  width: 100%;
+  padding: 16px;
+  background: #0ea5e9;
+  color: #080c14;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 800;
+  font-size: 0.9rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  border: none;
+  clip-path: polygon(12px 0%,100% 0%,calc(100% - 12px) 100%,0% 100%);
+  cursor: pointer;
+  transition: all 0.4s cubic-bezier(0.32,0.72,0,1);
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  will-change: transform;
+}
+.btn-submit:hover { background: #f59e0b; transform: translateY(-3px); }
+.btn-submit-icon {
+  width: 26px; height: 26px;
+  background: rgba(0,0,0,0.14);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.88rem;
+  transition: transform 0.35s cubic-bezier(0.32,0.72,0,1);
+}
+.btn-submit:hover .btn-submit-icon { transform: translate(3px,-3px) scale(1.15); }
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+footer {
+  padding: 60px 0 30px;
+  border-top: 1px solid rgba(255,255,255,0.055);
+}
+.footer-grid {
+  display: grid;
+  grid-template-columns: 2.2fr 1fr 1fr 1fr;
+  gap: 52px;
+  margin-bottom: 48px;
+}
+.footer-logo {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: #f8fafc;
+  letter-spacing: -0.02em;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.footer-tagline {
+  font-size: 0.82rem;
+  line-height: 1.62;
+  color: rgba(241,245,249,0.32);
+  max-width: 230px;
+  margin-bottom: 22px;
+}
+.footer-socials { display: flex; gap: 10px; }
+.social-btn {
+  width: 34px; height: 34px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  text-decoration: none;
+  transition: all 0.35s ease;
+}
+.social-btn:hover { background: rgba(14,165,233,0.14); border-color: rgba(14,165,233,0.3); }
+.footer-col-title {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(241,245,249,0.28);
+  margin-bottom: 18px;
+}
+.footer-links { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.footer-links a {
+  font-size: 0.84rem;
+  color: rgba(241,245,249,0.46);
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+.footer-links a:hover { color: #f8fafc; }
+.footer-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 26px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.footer-copy { font-size: 0.76rem; color: rgba(241,245,249,0.22); }
+.faa-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  font-size: 0.67rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(241,245,249,0.38);
+}
+.green-dot {
+  width: 6px; height: 6px;
+  background: #22c55e;
+  border-radius: 50%;
+  animation: pulse-glow 2s infinite;
+}
+
+/* ============================================================
+   RESPONSIVE — Mobile collapses per Antigravity rules
+   ============================================================ */
+@media (max-width: 768px) {
+  body { cursor: auto; }
+  #cursor-dot, #cursor-ring { display: none; }
+  .scroll-progress { display: none; }
+
+  .nav-links { display: none; }
+
+  .hero-content { grid-template-columns: 1fr; gap: 44px; }
+  .hero-right { flex-direction: row; flex-wrap: wrap; gap: 10px; }
+  .hero-right .stat-card { flex: 1 1 calc(50% - 5px); min-width: 0; }
+
+  .services-header { flex-direction: column; align-items: flex-start; }
+  .services-grid { grid-template-columns: 1fr; }
+
+  .portfolio-panels { flex-direction: column; height: auto; }
+  .portfolio-panel { height: 220px; flex: none !important; }
+  .portfolio-header { flex-direction: column; align-items: flex-start; }
+
+  .stats-grid { grid-template-columns: 1fr 1fr; }
+  .stat-block:first-child { border-radius: 18px 18px 0 0; }
+  .stat-block:last-child { border-radius: 0 0 18px 18px; }
+
+  .process-layout { grid-template-columns: 1fr; gap: 52px; }
+  .process-sticky { position: static; }
+
+  .contact-layout { grid-template-columns: 1fr; gap: 44px; }
+  .contact-form-inner { padding: 30px 24px; }
+
+  .footer-grid { grid-template-columns: 1fr 1fr; }
+  .footer-grid > *:first-child { grid-column: 1 / -1; }
+  .form-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- Three.js canvas background -->
+<canvas id="three-bg"></canvas>
+
+<!-- Grain noise overlay (fixed, GPU-safe) -->
+<div id="noise-overlay"></div>
+
+<!-- Custom cursor -->
+<div id="cursor-dot"></div>
+<div id="cursor-ring"></div>
+
+<!-- Scroll progress indicator -->
+<div class="scroll-progress" id="scrollProgress">
+  <div class="scroll-dot active" data-section="hero"></div>
+  <div class="scroll-dot" data-section="services"></div>
+  <div class="scroll-dot" data-section="portfolio"></div>
+  <div class="scroll-dot" data-section="stats"></div>
+  <div class="scroll-dot" data-section="process"></div>
+  <div class="scroll-dot" data-section="testimonials"></div>
+  <div class="scroll-dot" data-section="contact"></div>
+</div>
+
+<!-- ========================================================
+     NAVIGATION
+     ======================================================== -->
+<nav>
+  <div class="nav-inner">
+    <a href="#hero" class="nav-logo">
+      <span class="logo-dot"></span>
+      SkyFrame
+    </a>
+    <ul class="nav-links">
+      <li><a href="#services">Services</a></li>
+      <li><a href="#portfolio">Portfolio</a></li>
+      <li><a href="#process">Process</a></li>
+      <li><a href="#contact">Contact</a></li>
+    </ul>
+    <a href="#contact" class="nav-cta">Book a Flight</a>
+  </div>
+</nav>
+
+<!-- ========================================================
+     HERO
+     ======================================================== -->
+<section id="hero">
+  <div class="hero-content">
+    <div class="hero-left">
+      <div class="hero-eyebrow">
+        <span class="live-dot"></span>
+        FAA Part 107 Certified &nbsp;·&nbsp; Available Now
+      </div>
+      <h1 class="hero-h1">
+        CAPTURE
+        <span class="sky-word">THE SKY.</span>
+        SELL THE VISION.
+      </h1>
+      <p class="hero-sub">
+        Professional drone cinematography for real estate, commercial projects, and aerial storytelling. We make properties irresistible from above — delivered in 48 hours.
+      </p>
+      <div class="hero-ctas">
+        <a href="#portfolio" class="btn-primary">
+          View Our Work
+          <span class="btn-icon">↗</span>
+        </a>
+        <a href="#contact" class="btn-outline">
+          Get a Quote →
+        </a>
+      </div>
+    </div>
+
+    <div class="hero-right">
+      <div class="stat-card">
+        <div class="stat-card-inner">
+          <div class="stat-icon">🏠</div>
+          <div>
+            <div class="stat-num">500+</div>
+            <div class="stat-label">Properties Filmed</div>
+          </div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-inner">
+          <div class="stat-icon">🎬</div>
+          <div>
+            <div class="stat-num">4K UHD</div>
+            <div class="stat-label">Ultra HD Resolution</div>
+          </div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-inner">
+          <div class="stat-icon">⚡</div>
+          <div>
+            <div class="stat-num">48<span style="font-size:0.95rem;color:#0ea5e9;font-weight:600">hr</span></div>
+            <div class="stat-label">Turnaround Time</div>
+          </div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-inner">
+          <div class="stat-icon">🛡️</div>
+          <div>
+            <div class="stat-num">$2M</div>
+            <div class="stat-label">Liability Coverage</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================
+     MARQUEE
+     ======================================================== -->
+<div class="marquee-wrap">
+  <div class="marquee-track">
+    <!-- items duplicated for seamless loop -->
+    <div class="marquee-item"><span>Aerial Real Estate Tours</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>4K Cinematic Footage</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>FAA Part 107 Licensed</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>$2M Fully Insured</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>48-Hour Delivery</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>HDR Photography</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>Virtual Property Tours</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>Commercial Projects</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>Aerial Real Estate Tours</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>4K Cinematic Footage</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>FAA Part 107 Licensed</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>$2M Fully Insured</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>48-Hour Delivery</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>HDR Photography</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>Virtual Property Tours</span><span class="marquee-sep"></span></div>
+    <div class="marquee-item"><span>Commercial Projects</span><span class="marquee-sep"></span></div>
+  </div>
+</div>
+
+<!-- ========================================================
+     SERVICES
+     ======================================================== -->
+<section id="services">
+  <div class="section-container">
+    <div class="services-header">
+      <div>
+        <div class="section-eyebrow reveal"><span class="eyebrow-num">01</span> &nbsp;·&nbsp; What We Do</div>
+        <h2 class="section-h2 reveal delay-1">Aerial Services<br>Built to Convert</h2>
+      </div>
+      <p class="section-lead reveal delay-2">From luxury listings to commercial landmarks, our drone footage transforms how properties are perceived — and sold.</p>
+    </div>
+
+    <div class="services-grid">
+      <!-- Featured card (wider) -->
+      <div class="service-card featured reveal">
+        <div class="service-card-inner">
+          <span class="service-icon">🏡</span>
+          <div class="service-num">Service 01</div>
+          <h3 class="service-title">Real Estate Aerial Showcase</h3>
+          <div class="service-tags">
+            <span class="service-tag">4K Video</span>
+            <span class="service-tag">Photography</span>
+            <span class="service-tag">Virtual Tour</span>
+            <span class="service-tag">MLS Ready</span>
+          </div>
+          <p class="service-desc">Stunning aerial video tours and photography packages designed specifically for real estate listings. We capture every angle — rooflines, lot lines, neighborhood context, and golden-hour exteriors that stop the scroll and move buyers to action.</p>
+          <a href="#contact" class="service-link">Book a shoot →</a>
+        </div>
+      </div>
+
+      <div class="service-card reveal delay-1">
+        <div class="service-card-inner">
+          <span class="service-icon">🎥</span>
+          <div class="service-num">Service 02</div>
+          <h3 class="service-title">Cinematic Aerial Film</h3>
+          <p class="service-desc">Hollywood-style drone cinematography for commercial projects, brand campaigns, and visual storytelling. We craft footage that moves audiences and elevates brands.</p>
+          <a href="#contact" class="service-link">Get pricing →</a>
+        </div>
+      </div>
+
+      <div class="service-card reveal delay-2">
+        <div class="service-card-inner">
+          <span class="service-icon">🌐</span>
+          <div class="service-num">Service 03</div>
+          <h3 class="service-title">Custom Aerial Projects</h3>
+          <p class="service-desc">Events, construction tracking, land surveys, and bespoke aerial content. If you can imagine it from above, we can capture it — safely and legally.</p>
+          <a href="#contact" class="service-link">Discuss project →</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================
+     PORTFOLIO — Expandable panels
+     ======================================================== -->
+<section id="portfolio">
+  <div class="section-container">
+    <div class="portfolio-header">
+      <div>
+        <div class="section-eyebrow reveal"><span class="eyebrow-num">02</span> &nbsp;·&nbsp; Featured Work</div>
+        <h2 class="section-h2 reveal delay-1">Properties That<br>Sell Themselves</h2>
+      </div>
+      <a href="#contact" class="btn-outline reveal delay-2" style="align-self:flex-end">View All Work →</a>
+    </div>
+
+    <div class="portfolio-panels reveal">
+      <div class="portfolio-panel">
+        <div class="panel-bg panel-bg-1"></div>
+        <div class="panel-grid"></div>
+        <div class="panel-overlay"></div>
+        <div class="panel-drone-badge">🚁 Aerial · 4K</div>
+        <div class="panel-content">
+          <div class="panel-badge">Luxury · Malibu, CA</div>
+          <div class="panel-title">Oceanfront Estate</div>
+          <div class="panel-price">Listed at $8.5M · Sold in 6 days</div>
+        </div>
+      </div>
+
+      <div class="portfolio-panel">
+        <div class="panel-bg panel-bg-2"></div>
+        <div class="panel-grid"></div>
+        <div class="panel-overlay"></div>
+        <div class="panel-drone-badge">🚁 Aerial · 4K</div>
+        <div class="panel-content">
+          <div class="panel-badge">Modern · Austin, TX</div>
+          <div class="panel-title">Hill Country Villa</div>
+          <div class="panel-price">Listed at $3.2M · Multiple offers</div>
+        </div>
+      </div>
+
+      <div class="portfolio-panel">
+        <div class="panel-bg panel-bg-3"></div>
+        <div class="panel-grid"></div>
+        <div class="panel-overlay"></div>
+        <div class="panel-drone-badge">🚁 Commercial</div>
+        <div class="panel-content">
+          <div class="panel-badge">Ranch · Denver, CO</div>
+          <div class="panel-title">Sunset Ranch Estate</div>
+          <div class="panel-price">Listed at $12M · Under contract</div>
+        </div>
+      </div>
+
+      <div class="portfolio-panel">
+        <div class="panel-bg panel-bg-4"></div>
+        <div class="panel-grid"></div>
+        <div class="panel-overlay"></div>
+        <div class="panel-drone-badge">🚁 Aerial · 4K</div>
+        <div class="panel-content">
+          <div class="panel-badge">Resort · Miami, FL</div>
+          <div class="panel-title">Waterfront Complex</div>
+          <div class="panel-price">Listed at $5.8M</div>
+        </div>
+      </div>
+
+      <div class="portfolio-panel">
+        <div class="panel-bg panel-bg-5"></div>
+        <div class="panel-grid"></div>
+        <div class="panel-overlay"></div>
+        <div class="panel-drone-badge">🚁 Aerial · HDR</div>
+        <div class="panel-content">
+          <div class="panel-badge">Residential · Seattle, WA</div>
+          <div class="panel-title">Lakeside Retreat</div>
+          <div class="panel-price">Listed at $2.1M · Sold in 4 days</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================
+     STATS BAR
+     ======================================================== -->
+<section id="stats">
+  <div class="section-container">
+    <div class="stats-grid">
+      <div class="stat-block">
+        <div class="stat-block-inner">
+          <div class="stat-big"><span class="count-up" data-target="500">0</span><span class="accent">+</span></div>
+          <div class="stat-desc">Properties filmed<br>across the country</div>
+        </div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-block-inner">
+          <div class="stat-big"><span class="count-up" data-target="98">0</span><span class="accent">%</span></div>
+          <div class="stat-desc">Client satisfaction<br>rate on all projects</div>
+        </div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-block-inner">
+          <div class="stat-big"><span class="count-up" data-target="48">0</span><span class="accent">hr</span></div>
+          <div class="stat-desc">Average delivery<br>turnaround time</div>
+        </div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-block-inner">
+          <div class="stat-big"><span class="count-up" data-target="7">0</span><span class="accent">+</span></div>
+          <div class="stat-desc">Years of licensed<br>aerial experience</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================
+     PROCESS
+     ======================================================== -->
+<section id="process">
+  <div class="section-container">
+    <div class="process-layout">
+      <!-- Sticky left column -->
+      <div class="process-sticky">
+        <div class="section-eyebrow reveal"><span class="eyebrow-num">03</span> &nbsp;·&nbsp; How It Works</div>
+        <h2 class="section-h2 reveal delay-1">From Takeoff<br>to Delivered</h2>
+        <p class="section-lead reveal delay-2" style="margin-top:16px">A streamlined process designed to make aerial filming effortless — from the first call to final delivery.</p>
+        <div class="process-visual reveal delay-3">
+          <div class="process-visual-inner">
+            <div class="process-visual-title">✈️ Ready to fly?</div>
+            <div class="process-visual-sub">Most projects launch within 3 days of booking.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Accordion steps -->
+      <div class="process-steps">
+        <div class="process-step active reveal">
+          <div class="step-num">01</div>
+          <div>
+            <div class="step-title">Consultation & Site Scout</div>
+            <div class="step-desc">We start with a call to understand your property, goals, and timeline. Our team then scouts the location — checking airspace clearances, FAA authorizations, optimal flight paths, and the ideal time of day for golden-hour light.</div>
+          </div>
+        </div>
+        <div class="process-step reveal delay-1">
+          <div class="step-num">02</div>
+          <div>
+            <div class="step-title">Aerial Capture Day</div>
+            <div class="step-desc">Our pilot arrives fully equipped with professional-grade DJI Inspire 3 and Mavic 3 Pro equipment. We capture everything — sweeping establishing shots, precise property angles, neighborhood context, and close-up detail shots in 4K HDR.</div>
+          </div>
+        </div>
+        <div class="process-step reveal delay-2">
+          <div class="step-num">03</div>
+          <div>
+            <div class="step-title">Professional Edit & Color Grade</div>
+            <div class="step-desc">Our editors apply cinematic color grading, stabilization, and licensed music scoring. Every edit is crafted specifically for your property's unique character and target buyer — never templated, never generic.</div>
+          </div>
+        </div>
+        <div class="process-step reveal delay-3">
+          <div class="step-num">04</div>
+          <div>
+            <div class="step-title">Delivery Within 48 Hours</div>
+            <div class="step-desc">You receive a private link to your full 4K video, edited highlight reel, still photography gallery, and ready-to-embed virtual tour. All files formatted for MLS, social media, and your website — ready to post immediately.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================
+     TESTIMONIAL
+     ======================================================== -->
+<section id="testimonials">
+  <div class="section-container">
+    <div class="star-row reveal">★ ★ ★ ★ ★</div>
+    <blockquote class="testimonial-quote reveal delay-1">
+      "The drone footage SkyFrame delivered <span class="highlight">sold our $4.2M listing in under a week.</span> The aerial perspective completely transformed how buyers perceived the property. They could see the lot, the lake access, the entire neighborhood context. Absolutely transformative."
+    </blockquote>
+    <div class="testimonial-author reveal delay-2">
+      <div class="author-avatar">SK</div>
+      <div>
+        <div class="author-name">Sarah Kellerman</div>
+        <div class="author-role">Principal Broker · Kellerman Luxury Realty</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================
+     CONTACT
+     ======================================================== -->
+<section id="contact">
+  <div class="section-container">
+    <div class="contact-layout">
+      <!-- Left -->
+      <div class="contact-left">
+        <div class="section-eyebrow reveal"><span class="eyebrow-num">05</span> &nbsp;·&nbsp; Get Started</div>
+        <h2 class="section-h2 reveal delay-1" style="font-size:clamp(2rem,4vw,3.2rem)">Let's Get<br>Your Property<br>Airborne.</h2>
+        <p class="section-lead reveal delay-2" style="margin-top:16px">Tell us about your project and we'll put together a custom quote within 24 hours. No obligation, no fluff.</p>
+        <div class="contact-details reveal delay-3">
+          <div class="contact-detail">
+            <div class="detail-icon">📍</div>
+            <div>
+              <div class="detail-label">Service area</div>
+              <div class="detail-value">Nationwide — coast to coast</div>
+            </div>
+          </div>
+          <div class="contact-detail">
+            <div class="detail-icon">📞</div>
+            <div>
+              <div class="detail-label">Call or text anytime</div>
+              <div class="detail-value">(555) SKY-FRAME</div>
+            </div>
+          </div>
+          <div class="contact-detail">
+            <div class="detail-icon">✉️</div>
+            <div>
+              <div class="detail-label">Email us directly</div>
+              <div class="detail-value">hello@skyframe.co</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right — double-bezel form -->
+      <div class="contact-form-shell reveal delay-2">
+        <div class="contact-form-inner">
+          <div class="form-row">
+            <div>
+              <label class="form-label">First Name</label>
+              <input type="text" class="form-input" placeholder="Jane" />
+            </div>
+            <div>
+              <label class="form-label">Last Name</label>
+              <input type="text" class="form-input" placeholder="Smith" />
+            </div>
+          </div>
+          <div>
+            <label class="form-label">Email Address</label>
+            <input type="email" class="form-input" placeholder="jane@brokerage.com" />
+          </div>
+          <div>
+            <label class="form-label">Phone Number</label>
+            <input type="tel" class="form-input" placeholder="(555) 000-0000" />
+          </div>
+          <div>
+            <label class="form-label">Project Type</label>
+            <select class="form-input">
+              <option value="">Select a service...</option>
+              <option>Real Estate Aerial Package</option>
+              <option>Cinematic Commercial Film</option>
+              <option>Custom Aerial Project</option>
+              <option>Event Coverage</option>
+              <option>Land / Survey Mapping</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Property / Project Details</label>
+            <textarea class="form-input" rows="4" placeholder="Tell us about your property, location, timeline, and any specific shots you have in mind..." style="resize:vertical;"></textarea>
+          </div>
+          <button type="button" class="btn-submit">
+            Request a Quote
+            <span class="btn-submit-icon">↗</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================
+     FOOTER
+     ======================================================== -->
+<footer>
+  <div class="section-container">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-logo">
+          <span class="logo-dot"></span>
+          SkyFrame
+        </div>
+        <p class="footer-tagline">Professional aerial cinematography and drone real estate photography, delivered in 48 hours or less. FAA Part 107 certified. Fully insured.</p>
+        <div class="footer-socials">
+          <a href="#" class="social-btn">📷</a>
+          <a href="#" class="social-btn">🎬</a>
+          <a href="#" class="social-btn">💼</a>
+          <a href="#" class="social-btn">🐦</a>
+        </div>
+      </div>
+
+      <div>
+        <div class="footer-col-title">Services</div>
+        <ul class="footer-links">
+          <li><a href="#">Real Estate Packages</a></li>
+          <li><a href="#">Cinematic Film</a></li>
+          <li><a href="#">Virtual Tours</a></li>
+          <li><a href="#">Event Coverage</a></li>
+          <li><a href="#">Custom Projects</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <div class="footer-col-title">Company</div>
+        <ul class="footer-links">
+          <li><a href="#">About Us</a></li>
+          <li><a href="#">Our Fleet</a></li>
+          <li><a href="#">Portfolio</a></li>
+          <li><a href="#">Pricing</a></li>
+          <li><a href="#">Blog</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <div class="footer-col-title">Legal</div>
+        <ul class="footer-links">
+          <li><a href="#">Privacy Policy</a></li>
+          <li><a href="#">Terms of Service</a></li>
+          <li><a href="#">FAA Compliance</a></li>
+          <li><a href="#">Insurance Docs</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <div class="footer-copy">© 2026 SkyFrame Aerial Cinematography. All rights reserved.</div>
+      <div class="faa-badge">
+        <span class="green-dot"></span>
+        FAA Part 107 Certified &amp; Insured
+      </div>
+    </div>
+  </div>
+</footer>
+
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script>
+/* ============================================================
+   THREE.JS — IMMERSIVE PARTICLE SYSTEM
+   · Camera fly-through on scroll (z: 13 → 3.5)
+   · Mouse moves camera X/Y position (parallax depth)
+   · Per-layer independent rotation speeds (z-depth illusion)
+   · Individual particle drift (ambient breathing)
+   · Shooting star streaks with random spawn
+   · Dramatic camera rush + screen shake on click
+   · Fog deepens as camera moves into sphere
+   Source: BACKGROUND-SYSTEMS.md BG-2 + Antigravity 3D SOPs
+   ============================================================ */
+/* ------ THREE.JS IMMERSIVE CORE ------ */
+(function () {
+  const canvas = document.getElementById('three-bg');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x080c14, 1);
+
+  const scene = new THREE.Scene();
+  // Exponential fog — thickens as camera moves into the sphere
+  scene.fog = new THREE.FogExp2(0x080c14, 0.014);
+
+  const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 600);
+  camera.position.set(0, 0, 13);
+
+  /* Glow texture factory */
+  function glowTex(r, g, b, size) {
+    size = size || 64;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    const half = size / 2;
+    const grd = ctx.createRadialGradient(half, half, 0, half, half, half);
+    grd.addColorStop(0,   `rgba(${r},${g},${b},1)`);
+    grd.addColorStop(0.35,`rgba(${r},${g},${b},0.5)`);
+    grd.addColorStop(0.7, `rgba(${r},${g},${b},0.1)`);
+    grd.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, size, size);
+    return new THREE.CanvasTexture(c);
+  }
+
+  const tCore  = glowTex(255, 255, 255);
+  const tInner = glowTex(14, 165, 233);
+  const tMid   = glowTex(56, 189, 248);
+  const tOuter = glowTex(245, 158, 11);
+  const tHaze  = glowTex(24, 64, 110);
+  const tStar  = glowTex(180, 220, 255, 32);
+
+  /* Build a particle layer with per-particle drift velocity */
+  function makeLayer(count, baseRad, spread, tex, sz, op) {
+    const pos  = new Float32Array(count * 3);
+    const orig = new Float32Array(count * 3);
+    const vel  = new Float32Array(count * 3); // ambient drift
+    for (let i = 0; i < count; i++) {
+      const theta = Math.random() * Math.PI * 2;
+      const phi   = Math.acos(2 * Math.random() - 1);
+      const r     = baseRad + (Math.random() - 0.5) * spread;
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = r * Math.cos(phi);
+      const z = r * Math.sin(phi) * Math.sin(theta);
+      pos[i*3]=x;  pos[i*3+1]=y;  pos[i*3+2]=z;
+      orig[i*3]=x; orig[i*3+1]=y; orig[i*3+2]=z;
+      vel[i*3]   = (Math.random() - 0.5) * 0.0018;
+      vel[i*3+1] = (Math.random() - 0.5) * 0.0018;
+      vel[i*3+2] = (Math.random() - 0.5) * 0.0018;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+      size: sz, map: tex, transparent: true, opacity: op,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.userData.orig  = orig;
+    pts.userData.vel   = vel;
+    pts.userData.drift = new Float32Array(count * 3);
+    return pts;
+  }
+
+  const lCore  = makeLayer(1400, 0.4, 0.5,  tCore,  0.07, 0.95);
+  const lInner = makeLayer(4500, 2.0, 0.9,  tInner, 0.09, 0.85);
+  const lMid   = makeLayer(3200, 3.5, 1.3,  tMid,   0.10, 0.72);
+  const lOuter = makeLayer(2200, 5.2, 2.0,  tOuter, 0.08, 0.40);
+  const lHaze  = makeLayer(1800, 8.5, 4.0,  tHaze,  0.13, 0.28);
+
+  const group = new THREE.Group();
+  group.add(lCore, lInner, lMid, lOuter, lHaze);
+  scene.add(group);
+
+  // Each layer rotates at a different speed — creates parallax depth illusion
+  const layerRotSpeeds = [0.0004, 0.0010, 0.0015, 0.0019, 0.0008];
+  const layerRotAxes   = [
+    new THREE.Vector3(0.2, 1, 0.1).normalize(),
+    new THREE.Vector3(0.1, 1, 0.3).normalize(),
+    new THREE.Vector3(0.3, 1, 0.0).normalize(),
+    new THREE.Vector3(0.0, 1, 0.2).normalize(),
+    new THREE.Vector3(0.4, 1, 0.1).normalize(),
+  ];
+  const layers = [lCore, lInner, lMid, lOuter, lHaze];
+
+  /* ---- Shooting stars (drones streaking across the sky) ---- */
+  const STAR_COUNT = 40;
+  const starPos    = new Float32Array(STAR_COUNT * 3);
+  const starVel    = new Float32Array(STAR_COUNT * 3);
+  const starLife   = new Float32Array(STAR_COUNT);   // 0 = inactive
+  const starGeo    = new THREE.BufferGeometry();
+  starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+  const starMat    = new THREE.PointsMaterial({
+    size: 0.055, map: tStar, transparent: true,
+    opacity: 0.65, blending: THREE.AdditiveBlending, depthWrite: false
+  });
+  scene.add(new THREE.Points(starGeo, starMat));
+
+  function spawnStar(i) {
+    const side = Math.random() > 0.5 ? 1 : -1;
+    starPos[i*3]   = side * (6 + Math.random() * 6);
+    starPos[i*3+1] = (Math.random() - 0.5) * 10;
+    starPos[i*3+2] = (Math.random() - 0.5) * 6;
+    const speed = 0.06 + Math.random() * 0.10;
+    starVel[i*3]   = -side * speed * (0.7 + Math.random() * 0.5);
+    starVel[i*3+1] = (Math.random() - 0.5) * speed * 0.3;
+    starVel[i*3+2] = (Math.random() - 0.5) * speed * 0.2;
+    starLife[i]    = 0.8 + Math.random() * 0.2;
+  }
+  // Seed half the stars
+  for (let i = 0; i < STAR_COUNT; i++) {
+    if (Math.random() > 0.55) { spawnStar(i); starLife[i] *= Math.random(); }
+  }
+
+  /* ---- State ---- */
+  let explodeT      = -1;
+  let scrollProg    = 0;          // 0..1
+  let tCamX = 0, tCamY = 0;      // target camera XY (mouse parallax)
+  let camX  = 0, camY  = 0;      // smoothed camera XY
+  let tCamZ = 13, camZ = 13;     // target / smoothed camera Z (scroll fly-through)
+  let shakeAmt      = 0;          // screen shake magnitude
+  let tMouseX = 0, tMouseY = 0;  // raw normalised mouse (-1..1)
+  let mMouseX = 0, mMouseY = 0;  // smoothed mouse
+
+  /* ---- Scroll: camera fly-through ---- */
+  function onScroll() {
+    const maxSc = Math.max(1, document.documentElement.scrollHeight - innerHeight);
+    scrollProg  = Math.min(scrollY / maxSc, 1);
+    // Camera flies from z=13 down to z=3.5 as page scrolls
+    tCamZ = 13 - scrollProg * 9.5;
+    // Fog density increases slightly as we move in
+    scene.fog.density = 0.014 + scrollProg * 0.018;
+    // Tilt the whole group as we scroll (adds a roll-through feel)
+    group.rotation.z = scrollProg * 0.55;
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  /* ---- Mouse: camera XY parallax ---- */
+  document.addEventListener('mousemove', e => {
+    tMouseX = (e.clientX / innerWidth  - 0.5) * 2;  // -1..1
+    tMouseY = (e.clientY / innerHeight - 0.5) * 2;
+  });
+
+  /* ---- Click: explosion + camera rush + shake ---- */
+  document.addEventListener('click', () => {
+    explodeT  = 0;
+    shakeAmt  = 0.45;
+    // Rush camera forward, then ease back to scroll position
+    tCamZ     = Math.max(2.8, camZ - 4.5);
+    setTimeout(() => { tCamZ = 13 - scrollProg * 9.5; }, 700);
+  });
+
+  window.addEventListener('resize', () => {
+    renderer.setSize(innerWidth, innerHeight);
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+  });
+
+  const clock = new THREE.Clock();
+
+  (function animate() {
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+    const t  = clock.getElapsedTime();
+
+    /* --- Smooth mouse --- */
+    mMouseX += (tMouseX - mMouseX) * 0.045;
+    mMouseY += (tMouseY - mMouseY) * 0.045;
+
+    /* --- Camera XY parallax: camera position moves with mouse --- */
+    tCamX = mMouseX * 2.4;   // stronger than before
+    tCamY = -mMouseY * 1.6;
+    camX  += (tCamX - camX) * 0.038;
+    camY  += (tCamY - camY) * 0.038;
+
+    /* --- Camera Z fly-through --- */
+    camZ += (tCamZ - camZ) * 0.032;
+
+    /* --- Screen shake (decays quickly) --- */
+    let sX = 0, sY = 0;
+    if (shakeAmt > 0.005) {
+      sX = (Math.random() - 0.5) * shakeAmt;
+      sY = (Math.random() - 0.5) * shakeAmt;
+      shakeAmt *= 0.84;
+    }
+
+    camera.position.set(camX + sX, camY + sY, camZ);
+    camera.lookAt(0, 0, 0);
+
+    /* --- Explode timer --- */
+    if (explodeT >= 0) { explodeT += dt / 2.0; if (explodeT > 1) explodeT = -1; }
+
+    /* --- Slow ambient breathe --- */
+    const breathe = 1 + Math.sin(t * 0.34) * 0.044;
+
+    /* --- Update each layer independently --- */
+    layers.forEach((layer, li) => {
+      // Independent rotation per layer = parallax depth
+      layer.rotateOnAxis(layerRotAxes[li], layerRotSpeeds[li]);
+
+      const pos   = layer.geometry.attributes.position.array;
+      const orig  = layer.userData.orig;
+      const vel   = layer.userData.vel;
+      const drift = layer.userData.drift;
+      const n     = pos.length / 3;
+
+      let exScale = 1;
+      if (explodeT >= 0) {
+        const localT = Math.max(0, explodeT - li * 0.09);
+        exScale = 1 + Math.sin(localT * Math.PI) * (0.55 + li * 0.25);
+      }
+      const scale = breathe * exScale;
+
+      for (let i = 0; i < n; i++) {
+        const ix = i * 3, iy = ix + 1, iz = ix + 2;
+
+        // Accumulate drift
+        drift[ix] += vel[ix] * dt * 18;
+        drift[iy] += vel[iy] * dt * 18;
+        drift[iz] += vel[iz] * dt * 18;
+
+        // Soft constraint: drift can't wander more than 0.6 units
+        const dr = Math.sqrt(drift[ix]*drift[ix] + drift[iy]*drift[iy] + drift[iz]*drift[iz]);
+        if (dr > 0.6) { const f = 0.965; drift[ix]*=f; drift[iy]*=f; drift[iz]*=f; }
+
+        pos[ix] = orig[ix] * scale + drift[ix];
+        pos[iy] = orig[iy] * scale + drift[iy];
+        pos[iz] = orig[iz] * scale + drift[iz];
+      }
+      layer.geometry.attributes.position.needsUpdate = true;
+    });
+
+    /* --- Shooting stars update --- */
+    for (let i = 0; i < STAR_COUNT; i++) {
+      if (starLife[i] <= 0) {
+        // Random respawn chance per frame
+        if (Math.random() < 0.004) spawnStar(i);
+        continue;
+      }
+      starPos[i*3]   += starVel[i*3];
+      starPos[i*3+1] += starVel[i*3+1];
+      starPos[i*3+2] += starVel[i*3+2];
+      starLife[i]    -= dt * 0.6;
+      // Kill if out of view
+      if (Math.abs(starPos[i*3]) > 16 || starLife[i] <= 0) starLife[i] = 0;
+    }
+    starMat.opacity = 0.65;
+    starGeo.attributes.position.needsUpdate = true;
+
+    renderer.render(scene, camera);
+  })();
+})();
+
+
+/* ============================================================
+   2D CANVAS — Click ripple shockwave rings
+   Runs on a separate canvas above Three.js, below content
+   ============================================================ */
+(function () {
+  const cvs = document.createElement('canvas');
+  cvs.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2;';
+  document.body.appendChild(cvs);
+  const ctx = cvs.getContext('2d');
+  let W, H;
+
+  function resize() { W = cvs.width = innerWidth; H = cvs.height = innerHeight; }
+  resize();
+  window.addEventListener('resize', resize);
+
+  const ripples = [];
+
+  document.addEventListener('click', e => {
+    const cx = e.clientX, cy = e.clientY;
+    const maxR = Math.hypot(Math.max(cx, W - cx), Math.max(cy, H - cy)) * 1.2;
+
+    // Primary sky-blue ring
+    ripples.push({ x: cx, y: cy, r: 0, maxR, life: 1.0, decay: 0.022, color: [14, 165, 233] });
+    // Secondary amber ring, delayed
+    setTimeout(() => {
+      ripples.push({ x: cx, y: cy, r: 0, maxR: maxR * 0.65, life: 1.0, decay: 0.028, color: [245, 158, 11] });
+    }, 110);
+    // Tight inner ring
+    ripples.push({ x: cx, y: cy, r: 0, maxR: maxR * 0.28, life: 1.0, decay: 0.045, color: [255, 255, 255] });
+
+    // Brief white flash
+    ripples.push({ flash: true, life: 1.0, decay: 0.12 });
+  });
+
+  (function loop() {
+    requestAnimationFrame(loop);
+    ctx.clearRect(0, 0, W, H);
+
+    for (let i = ripples.length - 1; i >= 0; i--) {
+      const rp = ripples[i];
+      rp.life -= rp.decay;
+      if (rp.life <= 0) { ripples.splice(i, 1); continue; }
+
+      if (rp.flash) {
+        // Screen flash overlay
+        ctx.fillStyle = `rgba(14,165,233,${rp.life * 0.08})`;
+        ctx.fillRect(0, 0, W, H);
+        continue;
+      }
+
+      // Ease ring expansion: fast start, slow end
+      rp.r += (rp.maxR - rp.r) * 0.07;
+      const [r, g, b] = rp.color;
+      const alpha = rp.life * 0.55;
+
+      // Main ring
+      ctx.beginPath();
+      ctx.arc(rp.x, rp.y, rp.r, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${r},${g},${b},${alpha})`;
+      ctx.lineWidth   = 1.5 + rp.life * 1.5;
+      ctx.stroke();
+
+      // Soft glow halo behind ring
+      const grad = ctx.createRadialGradient(rp.x, rp.y, Math.max(0, rp.r - 20), rp.x, rp.y, rp.r + 20);
+      grad.addColorStop(0,   `rgba(${r},${g},${b},0)`);
+      grad.addColorStop(0.5, `rgba(${r},${g},${b},${rp.life * 0.07})`);
+      grad.addColorStop(1,   `rgba(${r},${g},${b},0)`);
+      ctx.beginPath();
+      ctx.arc(rp.x, rp.y, rp.r, 0, Math.PI * 2);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth   = 32 * rp.life;
+      ctx.stroke();
+    }
+  })();
+})();
+
+
+/* ============================================================
+   CUSTOM CURSOR
+   Smooth lagging ring — design-spells magnetic feel
+   ============================================================ */
+const cursorDot  = document.getElementById('cursor-dot');
+const cursorRing = document.getElementById('cursor-ring');
+let mouseX = 0, mouseY = 0, ringX = 0, ringY = 0;
+
+document.addEventListener('mousemove', e => {
+  mouseX = e.clientX; mouseY = e.clientY;
+  cursorDot.style.left = mouseX + 'px';
+  cursorDot.style.top  = mouseY + 'px';
+});
+
+(function animRing() {
+  ringX += (mouseX - ringX) * 0.11;
+  ringY += (mouseY - ringY) * 0.11;
+  cursorRing.style.left = ringX + 'px';
+  cursorRing.style.top  = ringY + 'px';
+  requestAnimationFrame(animRing);
+})();
+
+// Hover state — cursor transforms on interactive elements
+document.querySelectorAll('a, button, .service-card, .portfolio-panel, .process-step, .stat-card').forEach(el => {
+  el.addEventListener('mouseenter', () => document.body.classList.add('hovering'));
+  el.addEventListener('mouseleave', () => document.body.classList.remove('hovering'));
+});
+
+
+/* ============================================================
+   SCROLL REVEAL — IntersectionObserver (no scroll listener — perf safe)
+   ============================================================ */
+const revealObs = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) e.target.classList.add('visible');
+  });
+}, { threshold: 0.1 });
+
+document.querySelectorAll('.reveal').forEach(el => revealObs.observe(el));
+
+// Hero elements (special triggers, not .reveal class)
+['.hero-eyebrow', '.hero-h1', '.hero-sub', '.hero-ctas', '.hero-right'].forEach((sel, i) => {
+  const el = document.querySelector(sel);
+  if (el) setTimeout(() => el.classList.add('visible'), 80 + i * 150);
+});
+
+
+/* ============================================================
+   COUNT-UP NUMBERS — cubic ease
+   ============================================================ */
+function countUp(el, target, duration = 1800) {
+  let start = null;
+  (function step(ts) {
+    if (!start) start = ts;
+    const progress = Math.min((ts - start) / duration, 1);
+    const eased    = 1 - Math.pow(1 - progress, 3);
+    el.textContent = Math.floor(eased * target);
+    if (progress < 1) requestAnimationFrame(step);
+    else el.textContent = target;
+  })(performance.now());
+}
+
+const countObs = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      countUp(e.target, parseInt(e.target.dataset.target));
+      countObs.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.5 });
+
+document.querySelectorAll('.count-up').forEach(el => countObs.observe(el));
+
+
+/* ============================================================
+   SCROLL PROGRESS DOTS
+   ============================================================ */
+const sectionIds = ['hero','services','portfolio','stats','process','testimonials','contact'];
+const scrollDots = document.querySelectorAll('.scroll-dot');
+
+scrollDots.forEach((dot, i) => {
+  dot.addEventListener('click', () => {
+    document.getElementById(sectionIds[i])?.scrollIntoView({ behavior: 'smooth' });
+  });
+});
+
+const secObs = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      const idx = sectionIds.indexOf(e.target.id);
+      if (idx >= 0) {
+        scrollDots.forEach(d => d.classList.remove('active'));
+        scrollDots[idx]?.classList.add('active');
+      }
+    }
+  });
+}, { threshold: 0.45 });
+
+sectionIds.forEach(id => {
+  const el = document.getElementById(id);
+  if (el) secObs.observe(el);
+});
+
+
+/* ============================================================
+   PROCESS ACCORDION
+   ============================================================ */
+document.querySelectorAll('.process-step').forEach(step => {
+  step.addEventListener('click', () => {
+    document.querySelectorAll('.process-step').forEach(s => s.classList.remove('active'));
+    step.classList.add('active');
+  });
+});
+
+
+/* ============================================================
+   MAGNETIC BUTTON EFFECT — design-spells physics hover
+   ============================================================ */
+document.querySelectorAll('.btn-primary, .btn-submit, .nav-cta').forEach(btn => {
+  btn.addEventListener('mousemove', e => {
+    const r = btn.getBoundingClientRect();
+    const x = e.clientX - r.left - r.width  / 2;
+    const y = e.clientY - r.top  - r.height / 2;
+    btn.style.transform = `translate(${x * 0.18}px, ${y * 0.18}px)`;
+  });
+  btn.addEventListener('mouseleave', () => {
+    btn.style.transform = '';
+    btn.style.transition = 'transform 0.5s cubic-bezier(0.32,0.72,0,1), background 0.4s ease';
+  });
+  btn.addEventListener('mouseenter', () => {
+    btn.style.transition = 'background 0.4s ease';
+  });
+});
+
+
+/* ============================================================
+   FORM SUBMIT FEEDBACK
+   ============================================================ */
+document.querySelector('.btn-submit')?.addEventListener('click', function() {
+  const btn = this;
+  btn.textContent = '✓ Sent! We\'ll be in touch within 24hrs';
+  btn.style.background = '#22c55e';
+  btn.style.transform  = 'translateY(-3px)';
+  setTimeout(() => {
+    btn.innerHTML = 'Request a Quote <span class="btn-submit-icon">↗</span>';
+    btn.style.background = '';
+    btn.style.transform  = '';
+  }, 4000);
+});
+</script>
+
+</body>
+</html>
