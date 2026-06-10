@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Birthday Story Experience</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <audio id="bgMusic" autoplay loop preload="auto" playsinline>
+      <source src="Sound.mp3" type="audio/mpeg" />
+    </audio>
+
+    <main class="app-shell" id="appShell">
+      <section class="scene scene-matrix active" id="sceneMatrix" aria-label="Matrix intro">
+        <canvas id="rainCanvas" aria-hidden="true"></canvas>
+        <div class="matrix-overlay"></div>
+        <div class="matrix-center" id="matrixCenter" aria-live="polite"></div>
+      </section>
+
+      <section class="scene scene-story" id="sceneStory" aria-label="Birthday story">
+        <div class="space-layer"></div>
+        <div class="space-layer space-layer-far"></div>
+
+        <article class="character-block" id="characterBlock">
+          <img
+            class="character-gif"
+            src="Have A Happy Birthday GIF by VeeFriends.gif"
+            alt="Happy birthday character"
+          />
+          <p class="character-note">A little surprise is coming...</p>
+          <p class="bottom-heart" aria-hidden="true">❤</p>
+        </article>
+
+        <section class="envelope-stage" id="envelopeStage" aria-label="Envelope stage">
+          <p class="tap-instruction" id="tapInstruction"></p>
+
+          <div class="envelope-wrap" id="envelopeWrap" role="button" tabindex="0" aria-label="Open envelope">
+            <div class="envelope-flap" id="envelopeFlap"></div>
+            <div class="envelope-body"></div>
+            <div class="seal-heart"></div>
+          </div>
+
+          <div class="polaroid-area" id="polaroidArea" aria-live="polite">
+            <div class="caption-chip">
+              <p class="slide-caption" id="slideCaption">Happy Birthday my heart</p>
+              <span class="chip-heart" aria-hidden="true">❤</span>
+            </div>
+
+            <div class="polaroid-stack" id="polaroidStack"></div>
+          </div>
+        </section>
+
+        <section class="collage-stage" id="collageStage" aria-label="Heart collage">
+          <p class="collage-title">Built with our memories</p>
+          <div class="heart-collage" id="heartCollage"></div>
+        </section>
+      </section>
+
+      <section class="scene scene-message" id="sceneMessage" aria-label="Final message">
+        <div class="message-overlay"></div>
+        <article class="message-box" id="messageBox" aria-live="polite">
+          <h2 class="message-title">FOR my heart</h2>
+          <p class="message-line">You are my favorite part of every day.</p>
+          <p class="message-line">Thank you for being my joy and my home.</p>
+          <p class="message-line">Happy Birthday, my heart.</p>
+        </article>
+      </section>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>
