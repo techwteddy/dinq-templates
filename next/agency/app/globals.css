@@ -1,0 +1,219 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    overflow-x: hidden;
+    width: 100%;
+  }
+
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  textarea:-webkit-autofill,
+  textarea:-webkit-autofill:hover,
+  textarea:-webkit-autofill:focus,
+  select:-webkit-autofill,
+  select:-webkit-autofill:hover,
+  select:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--autofill-text) !important;
+    -webkit-box-shadow: 0 0 0px 1000px var(--autofill-bg) inset !important;
+    transition: background-color 5000s ease-in-out 0s;
+    caret-color: var(--autofill-text);
+    border-radius: 0.5rem !important;
+    background-clip: content-box !important;
+  }
+}
+
+@layer components {
+  .custom-button {
+    @apply bg-gray-900 hover:bg-gray-950 text-white transition-colors duration-300;
+  }
+
+  .dark .custom-button {
+    @apply bg-white/10 hover:bg-white/20;
+  }
+}
+
+@layer utilities {
+  .remove-autofill-style {
+    transition: background-color 0s 86400s, color 0s 86400s;
+  }
+  
+  .prevent-horizontal-scroll {
+    overflow-x: hidden !important;
+    max-width: 100vw !important;
+    width: 100% !important;
+    overflow-y: visible !important;
+  }
+}
+
+:root {
+  --autofill-bg: white;
+  --autofill-text: black;
+}
+
+.dark {
+  --autofill-bg: #1f2937;
+  --autofill-text: white;
+}
+
+* {
+  transition: background-color 0.3s ease, color 0.3s ease,
+    border-color 0.3s ease;
+}
+
+/* Updated styles for dark mode autofill */
+.dark input:-webkit-autofill,
+.dark input:-webkit-autofill:hover,
+.dark input:-webkit-autofill:focus,
+.dark textarea:-webkit-autofill,
+.dark textarea:-webkit-autofill:hover,
+.dark textarea:-webkit-autofill:focus,
+.dark select:-webkit-autofill,
+.dark select:-webkit-autofill:hover,
+.dark select:-webkit-autofill:focus {
+  -webkit-text-fill-color: white !important;
+  -webkit-box-shadow: 0 0 0px 1000px #1f2937 inset !important;
+  border-radius: 0.5rem !important;
+  background-clip: content-box !important;
+}
+
+/* Add these new styles to fix corners in both light and dark modes */
+input:-webkit-autofill,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  border-radius: 0.5rem !important;
+  background-clip: content-box !important;
+}
+
+/* Additional styles to ensure smooth corners */
+input,
+textarea,
+select {
+  background-clip: padding-box !important;
+}
+
+/* Keyboard Navigation and Focus Styles */
+/* Skip to content link - hidden until focused */
+.skip-to-content {
+  position: absolute;
+  top: -100px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 0.75rem 1.5rem;
+  background-color: #2563eb;
+  color: white;
+  text-decoration: none;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  transition: top 0.3s ease;
+}
+
+.skip-to-content:focus {
+  top: 1rem;
+  outline: 3px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+/* Enhanced focus indicators for all interactive elements */
+*:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+
+.dark *:focus-visible {
+  outline-color: #60a5fa;
+}
+
+/* Specific focus styles for buttons */
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.dark button:focus-visible,
+.dark a:focus-visible {
+  outline-color: #60a5fa;
+}
+
+/* Focus styles for form inputs */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 0;
+  border-color: #2563eb;
+}
+
+.dark input:focus-visible,
+.dark textarea:focus-visible,
+.dark select:focus-visible {
+  outline-color: #60a5fa;
+  border-color: #60a5fa;
+}
+
+/* Remove default focus outline for mouse users, keep for keyboard users */
+*:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Custom scroll */
+.custom-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #4a5568 #cbd5e0;
+}
+
+.custom-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.custom-scroll::-webkit-scrollbar-track {
+  background: #cbd5e0;
+  border-radius: 4px;
+}
+
+.custom-scroll::-webkit-scrollbar-thumb {
+  background-color: #4a5568;
+  border-radius: 4px;
+  border: 2px solid #cbd5e0;
+}
+
+.custom-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #2d3748;
+}
+
+.dark .custom-scroll {
+  scrollbar-color: #a0aec0 #2d3748;
+}
+
+.dark .custom-scroll::-webkit-scrollbar-track {
+  background: #2d3748;
+}
+
+.dark .custom-scroll::-webkit-scrollbar-thumb {
+  background-color: #a0aec0;
+  border: 2px solid #2d3748;
+}
+
+.dark .custom-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #cbd5e0;
+}
+
+/* Hide scrollbar for horizontal project gallery */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
