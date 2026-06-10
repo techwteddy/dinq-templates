@@ -1,0 +1,192 @@
+{
+  "personal": {
+    "name": "Kanika",
+    "title": "AI Engineer",
+    "alternativeTitles": ["AI Engineer", "Data Analyst", "Data Scientist"],
+    "tagline": "Building your intelligent solutions model by model!",
+    "photo": "/kanika-photo-new.png",
+    "location": "Toronto, ON M1W 3T6",
+    "email": "kanika281196@gmail.com",
+    "github": "https://github.com/dev-kanika",
+    "linkedin": "https://linkedin.com/in/kanika96",
+    "summary": "I am a passionate AI & Data Science student with over 2 years of experience in building ML solutions across NLP, Computer Vision, and Generative AI. Known for translating complex data into real-world applications through strong model-building, tuning, and teamwork."
+  },
+  "stats": [
+    { "label": "Years Experience", "value": "2+", "icon": "Briefcase" },
+    { "label": "ML Projects", "value": "15+", "icon": "Brain" },
+    { "label": "GitHub Repos", "value": "20+", "icon": "Github" },
+    { "label": "Students Taught", "value": "300+", "icon": "School" }
+  ],
+  "education": [
+    {
+      "degree": "Ontario College Graduate Certificate",
+      "field": "AI and Data Science",
+      "school": "Loyalist College",
+      "location": "Toronto, ON",
+      "period": "Apr 2024 – Present",
+      "status": "In Progress",
+      "logo": "/loyalist-college.png",
+      "url": "https://loyalistcollege.com/lcit/",
+      "focusAreas": [
+        "Machine Learning & Deep Learning",
+        "Natural Language Processing",
+        "Computer Vision and Neural Networks",
+        "Deployment and ML and LLM Ops",
+        "AI Agents and creating Pipelines"
+      ]
+    },
+    {
+      "degree": "Bachelor of Science",
+      "field": "Computer Science",
+      "school": "University of Delhi",
+      "location": "India",
+      "period": "Jul 2015 – Jun 2018",
+      "status": "Completed",
+      "logo": "/du-logo-new.png",
+      "url": "https://www.du.ac.in/",
+      "focusAreas": [
+        "Software Engineering & System Design",
+        "Data Structures & Algorithms",
+        "Object Oriented Programming",
+        "Database Management & Web Technologies",
+        "Networking and Cyber-Security"
+      ]
+    }
+  ],
+  "experience": [
+    {
+      "title": "Store Associate",
+      "company": "Dollarama",
+      "location": "Toronto, ON",
+      "period": "Mar 2024 – Present",
+      "companyLogo": "/dollarama-logo.png",
+      "companyUrl": "https://www.dollarama.com/en-ca/",
+      "achievements": [
+        "Assist 1000+ customers per shift with high accuracy",
+        "Manage 6000 SKUs daily, reducing out-of-stock rates by 15%",
+        "Maintain high customer satisfaction scores"
+      ]
+    },
+    {
+      "title": "Data Analyst & AI Educator",
+      "company": "Credence High School",
+      "location": "Dubai, UAE",
+      "period": "Feb 2022 – Feb 2024",
+      "companyLogo": "/credence-logo.png",
+      "companyUrl": "https://www.credencehighschool.com/",
+      "achievements": [
+        "Built Power BI dashboards & automated Excel reports for academic KPIs",
+        "Queried 2000+ student records via SQL to extract insights",
+        "Led exam department operations and digital reporting",
+        "Taught AI, ML & Python to 300 students with hands-on projects"
+      ]
+    },
+    {
+      "title": "IT Support & Computer Science Teacher",
+      "company": "Jain Modern Public School",
+      "location": "New Delhi, India",
+      "period": "Feb 2019 – May 2019",
+      "companyLogo": "/jmps-logo.png",
+      "companyUrl": "https://jainmodernpublicschool.com/",
+      "achievements": [
+        "Resolved IT issues & managed DOE/student data portals",
+        "Delivered digital tool training for staff & students",
+        "Taught Computer Science (Grades 1–8) with coding integration"
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "title": "IoT Security System",
+      "description": "Built an AI-enabled smart home system using Q-Learning, DQN, and Bandits for event-based threat detection and alerts. Integrated Raspberry Pi with real-time camera/audio input.",
+      "technologies": ["Python", "Q-Learning", "DQN", "Raspberry Pi", "Flask"],
+      "period": "Jun – Jul 2025",
+      "icon": "Home",
+      "logo": "/iot-smart-home-logo.png",
+      "metrics": "AI-Enabled • Real-time Detection • Mobile Alerts",
+      "color": "from-red-500 to-orange-500",
+      "githubUrl": "https://github.com/dev-kanika/iot-security-system-rapirl"
+    },
+    {
+      "title": "Biomedical LLM Chatbot",
+      "description": "Built 5 chatbot models using RAG, PEFT-TinyLLaMA, and prompt engineering. Implemented guardrails for safety and precision.",
+      "technologies": ["HuggingFace", "RAG", "LangChain", "FAISS", "LoRA"],
+      "period": "Jul – Aug 2025",
+      "icon": "MessageSquare",
+      "logo": "/chatbot-logo-new.png",
+      "metrics": "5 Models • RAG Pipeline • Safety Guardrails",
+      "color": "from-orange-500 to-red-500",
+      "githubUrl": "https://github.com/dev-kanika/llm-chatbot-multimodal-rag-bioasq"
+    },
+    {
+      "title": "Tweet Sentiment Analysis",
+      "description": "Built 5 sentiment classifiers achieving 81% F1-score with BiLSTM. Used Word2Vec, TF-IDF, and LIME for interpretability.",
+      "technologies": ["Python", "NLP", "Deep Learning", "LSTM", "NLTK"],
+      "period": "May – Jun 2025",
+      "icon": "MessageCircle",
+      "logo": "/tweet-sentiment-logo.png",
+      "metrics": "81% F1-Score • 35K Tweets • 5 Models",
+      "color": "from-purple-500 to-pink-500",
+      "githubUrl": "https://github.com/dev-kanika/Tweet-Sentiment-Analysis"
+    },
+    {
+      "title": "CrashCal (Car Crash Cost Estimator)",
+      "description": "Image-based system using CNN to detect car damage and predict repair costs. Achieved 87% accuracy with $356 MAE using EfficientNet.",
+      "technologies": ["Python", "CNN", "Computer Vision", "Azure", "EfficientNet"],
+      "period": "Sep – Dec 2024",
+      "icon": "Car",
+      "logo": "/crash-cal-logo-new.png",
+      "metrics": "87% Accuracy • $356 MAE • 20K Images",
+      "color": "from-green-500 to-emerald-500",
+      "githubUrl": "https://github.com/dev-kanika/CrashCal"
+    },
+    {
+      "title": "Bank Customer Churn Prediction",
+      "description": "Built a churn model on 355K records using SVM & logistic regression with 80% AUC. Deployed with Flask and used SHAP for explainability.",
+      "technologies": ["Python", "SVM", "Logistic Regression", "Flask", "SHAP"],
+      "period": "Jun – Aug 2024",
+      "icon": "TrendingDown",
+      "logo": "/bank-churn-logo.png",
+      "metrics": "355K Records • 80% AUC • 116 Features",
+      "color": "from-blue-500 to-cyan-500",
+      "githubUrl": "https://github.com/dev-kanika/Customer_Churn_Prediction"
+    },
+    {
+      "title": "Music Recommendation System",
+      "description": "Clustered songs using K-Means and KNN, leveraged Pandas and SQL for structured data analysis. Visualized insights using Seaborn for data storytelling.",
+      "technologies": ["Python", "K-Means", "KNN", "Pandas", "SQL", "Seaborn"],
+      "period": "May – Aug 2024",
+      "icon": "Music",
+      "logo": "/music-recommendation-logo.png",
+      "metrics": "K-Means Clustering • Audio Features • Data Visualization",
+      "color": "from-indigo-500 to-purple-500",
+      "githubUrl": "https://github.com/dev-kanika/Music-Recommendation-System"
+    }
+  ],
+  "skills": {
+    "Languages": [
+      { "name": "Python", "level": 95, "icon": "🐍", "color": "from-yellow-400 to-green-500" },
+      { "name": "SQL", "level": 85, "icon": "🗃️", "color": "from-blue-400 to-blue-600" },
+      { "name": "R", "level": 75, "icon": "📊", "color": "from-blue-500 to-purple-500" },
+      { "name": "JavaScript", "level": 60, "icon": "🟨", "color": "from-yellow-400 to-orange-500" }
+    ],
+    "Machine Learning": [
+      { "name": "TensorFlow", "level": 90, "icon": "🧠", "color": "from-orange-400 to-red-500" },
+      { "name": "Scikit-learn", "level": 95, "icon": "⚙️", "color": "from-blue-400 to-cyan-500" },
+      { "name": "PyTorch", "level": 80, "icon": "🔥", "color": "from-red-400 to-orange-500" },
+      { "name": "OpenCV", "level": 85, "icon": "👁️", "color": "from-green-400 to-blue-500" }
+    ],
+    "Cloud & Tools": [
+      { "name": "AWS", "level": 75, "icon": "☁️", "color": "from-orange-400 to-yellow-500" },
+      { "name": "Azure", "level": 80, "icon": "🌐", "color": "from-blue-400 to-cyan-500" },
+      { "name": "Docker", "level": 70, "icon": "🐳", "color": "from-blue-500 to-purple-500" },
+      { "name": "Git", "level": 90, "icon": "📝", "color": "from-red-400 to-pink-500" }
+    ],
+    "Data & Analytics": [
+      { "name": "Power BI", "level": 90, "icon": "📈", "color": "from-yellow-400 to-orange-500" },
+      { "name": "Tableau", "level": 85, "icon": "📊", "color": "from-blue-400 to-purple-500" },
+      { "name": "Excel", "level": 95, "icon": "📋", "color": "from-green-400 to-blue-500" },
+      { "name": "Pandas", "level": 95, "icon": "🐼", "color": "from-purple-400 to-pink-500" }
+    ]
+  }
+}
