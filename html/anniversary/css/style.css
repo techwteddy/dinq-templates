@@ -1,0 +1,847 @@
+/* Variáveis Premium e Paleta de Cores HSL para Carga Cognitiva Leve */
+:root {
+    --color-primary: hsl(338, 70%, 65%);
+    /* Pink suave apaixonado */
+    --color-secondary: hsl(340, 80%, 45%);
+    /* Pink escuro / framboesa */
+    --color-accent: hsl(45, 100%, 75%);
+    /* Ouro suave / Rolex vibes */
+    --color-bg-dark: hsl(230, 20%, 15%);
+    /* Azul meia-noite profundo */
+    --text-light: hsl(0, 0%, 95%);
+    --text-muted: hsl(0, 0%, 80%);
+
+    --glass-bg: rgba(255, 255, 255, 0.08);
+    --glass-border: rgba(255, 255, 255, 0.15);
+    --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    --blur-md: blur(12px);
+    --blur-lg: blur(20px);
+
+    --transition-smooth: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* Reset de Produção e Box-Sizing */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Outfit', sans-serif;
+    background-color: var(--color-bg-dark);
+    color: var(--text-light);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    overflow-x: hidden;
+    position: relative;
+    padding: 2rem 0;
+}
+
+/* Fundo Animado - Granularidade Fina GPU-Acelerada */
+.background-animation {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: -1;
+    background:
+        radial-gradient(circle at 15% 50%, rgba(224, 88, 140, 0.2), transparent 40%),
+        radial-gradient(circle at 85% 30%, rgba(240, 190, 80, 0.15), transparent 40%),
+        radial-gradient(circle at 50% 80%, rgba(120, 40, 100, 0.25), transparent 50%);
+    animation: pulseBg 12s ease-in-out infinite alternate;
+}
+
+@keyframes pulseBg {
+    0% {
+        opacity: 0.7;
+        transform: scale(1);
+    }
+
+    100% {
+        opacity: 1;
+        transform: scale(1.05);
+    }
+}
+
+/* Painel Glassmorphism Principal */
+.glass-panel {
+    background: var(--glass-bg);
+    backdrop-filter: var(--blur-lg);
+    -webkit-backdrop-filter: var(--blur-lg);
+    border: 1px solid var(--glass-border);
+    border-radius: 24px;
+    padding: 3rem 3rem 1rem 3rem;
+    /* Menos padding embaixo */
+    width: 90%;
+    max-width: 900px;
+    box-shadow: var(--glass-shadow);
+    margin: 2rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2.5rem;
+    animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideUpFade {
+    from {
+        opacity: 0;
+        transform: translateY(40px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Tipografia e Textos */
+.hero-title {
+    font-size: 3.5rem;
+    font-weight: 700;
+    text-align: center;
+    background: linear-gradient(135deg, var(--text-light) 0%, var(--color-primary) 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.5rem;
+}
+
+.hero-subtitle {
+    text-align: center;
+    font-size: 1.2rem;
+    color: var(--text-muted);
+    font-weight: 300;
+}
+
+
+
+/* ==================================
+   ENVELOPE INTERATIVO CENTRAL
+================================== */
+.letter-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    margin: 4rem 0 2rem 0;
+    padding: 0 1rem;
+    position: relative;
+    z-index: 2;
+    perspective: 1000px;
+    transition: margin 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.letter-section.open-spacing {
+    margin: 18rem 0 4rem 0;
+    /* Espaçamento apenas o suficiente para abrigar a carta levantada e não invadir muito embaixo */
+}
+
+/* O wrapper contém o clique */
+.envelope-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 600px;
+    aspect-ratio: 3 / 2; /* Proporção real de um envelope: mais largo que alto */
+    cursor: pointer;
+    transition: transform 0.4s ease;
+}
+
+.envelope-wrapper:hover {
+    transform: translateY(-5px);
+}
+
+.envelope {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    background: #423847;
+    /* Fundo interno */
+    border-radius: 8px;
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.4);
+    display: flex;
+    justify-content: center;
+}
+
+/* Bolso Frontal Inferior do Envelope */
+.envelope-pocket {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: #2b252d;
+    /* Frente mais escura */
+    border-radius: 8px;
+    z-index: 4;
+    clip-path: polygon(0 0, 50% 55%, 100% 0, 100% 100%, 0 100%);
+    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.3);
+}
+
+/* Aba Superior que Abre e Fecha */
+.envelope-flap {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 60%;
+    background: #352d3a;
+    border-radius: 8px 8px 0 0;
+    z-index: 5;
+    clip-path: polygon(0 0, 100% 0, 50% 100%);
+    transform-origin: top;
+    transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+/* Selinho da Aba */
+.envelope-seal {
+    position: absolute;
+    top: 60%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 2.5rem;
+    z-index: 6;
+    background: #f06292;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 5px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+    transition: all 0.5s ease;
+}
+
+.envelope-wrapper:hover .envelope-seal {
+    transform: translate(-50%, -50%) scale(1.1);
+}
+
+.open-hint {
+    position: absolute;
+    bottom: -35px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.9rem;
+    letter-spacing: 1px;
+    animation: bounce 2s infinite;
+}
+
+@keyframes bounce {
+
+    0%,
+    100% {
+        transform: translate(-50%, 0);
+    }
+
+    50% {
+        transform: translate(-50%, -8px);
+    }
+}
+
+/* Folha de Papel (Escondida dentro do envelope) */
+.letter-paper {
+    background: #fdfbf7;
+    background-image: linear-gradient(#e4e0d7 1px, transparent 1px);
+    background-size: 100% 40px;
+    background-position: 0 0;
+    /* Aumentei o espaço de cada linha pautada pra 40px pra dar mais respiro ao texto digitado */
+    border-radius: 4px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    padding: 40px 2.5rem;
+    /* Padding top idêntico ao line-height p/ sincronia inicial */
+    width: 90%;
+    /* Reduz um pouco pra caber confortavelmente dentro */
+    height: 90%;
+    /* Menor que o envelope pra não sair fora por padrão */
+    position: absolute;
+    top: 5%;
+    /* Borda superior bem rente e escondida */
+    left: 5%;
+    z-index: 3;
+    /* Fica entre o fundo (1) e o bolso (4) da frente */
+    /* A mágica do fechamento sem 'bugar' a frente é manter o Z-index 3 (atrás do bolso) imediatamente ao fechar */
+    transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.8s cubic-bezier(0.4, 0, 0.2, 1), z-index 0.1s ease 0.8s;
+
+    overflow: visible; /* Permite que o botão X apareça fora dos limites da folha */
+    pointer-events: none;
+}
+
+.letter-content {
+    font-family: 'Outfit', sans-serif;
+    font-size: 1.1rem;
+    line-height: 40px;
+    /* EXATAMENTE O MESMO VALOR DO background-size da malha .letter-paper para sincronizar cada linha de texto com o caderno */
+    color: #444;
+    text-align: justify;
+    outline: none;
+    cursor: text;
+    white-space: normal;
+    width: 100%;
+    max-height: 100%;
+    overflow-y: auto;
+    scrollbar-width: none;
+    /* Esconde no Firefox */
+    -ms-overflow-style: none;
+    /* Esconde no IE e Edge */
+    /* Fazendo com que o alinhamento da linha inicial comece perfeitamente na pauta do caderno */
+    padding-top: 10px;
+}
+
+/* Reset obrigatório de espaçamentos para que o texto não "pule" as linhas desenhadas pelo fundo */
+.letter-content p,
+.letter-content h2 {
+    margin: 0;
+    padding: 0;
+}
+
+.letter-content::-webkit-scrollbar {
+    display: none;
+    /* Esconde no Chrome, Safari e Opera */
+}
+
+/* ==================================
+   ESTADOS DE ABERTURA (.open)
+================================== */
+
+.envelope-wrapper.open .envelope-seal {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.5);
+    z-index: 1;
+    /* Força pro fundo após abrir */
+}
+
+.envelope-wrapper.open .envelope-flap {
+    transform: rotateX(180deg);
+    z-index: 2;
+    /* Fica atrás da carta subindo */
+}
+
+.envelope-wrapper.open .letter-paper {
+    height: 650px;
+    transform: translateY(-420px);
+    pointer-events: all;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    z-index: 6;
+    transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.8s cubic-bezier(0.4, 0, 0.2, 1), z-index 0.1s ease 0s;
+}
+
+/* Botão X para fechar a carta */
+.close-letter-btn {
+    display: none;
+    position: absolute;
+    top: -10px;
+    right: -10px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 2px solid rgba(0,0,0,0.1);
+    background: #fdfbf7; /* Mesma cor do papel */
+    color: #aaa;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 20;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    transition: background 0.2s, transform 0.2s, color 0.2s;
+}
+
+.envelope-wrapper.open .close-letter-btn {
+    display: flex; /* Só aparece quando a carta estiver aberta */
+}
+
+.close-letter-btn:hover {
+    background: rgba(0,0,0,0.22);
+    transform: scale(1.15);
+}
+
+@media (max-width: 768px) {
+    .letter-section {
+        margin: 2rem 0 0 0;
+        /* No celular quase nenhuma margem inferior agora tb pra Nossas Memórias ficar pertinho */
+    }
+
+    .letter-section.open-spacing {
+        margin: 10rem 0 4rem 0;
+    }
+
+    .envelope-wrapper {
+        max-width: 92vw; /* Envelopa quase toda a largura do celular */
+        aspect-ratio: 3 / 2; /* Mantém proporção real de envelope */
+        height: auto; /* Deixa o aspect-ratio calcular a altura */
+    }
+
+    .envelope-wrapper.open .letter-paper {
+        height: 520px;
+        transform: translateY(-62%);
+        z-index: 6;
+    }
+
+    .letter-paper {
+        padding: 2.5rem 1.2rem 1.5rem;
+        width: 92%;
+        height: 90%;
+        top: 5%;
+        left: 4%;
+    }
+
+    .letter-content {
+        font-size: 0.95rem;
+        line-height: 36px;
+    }
+}
+
+.date-badge {
+    display: inline-block;
+    background: var(--color-primary);
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 20px;
+    margin-bottom: 1rem;
+    letter-spacing: 0.5px;
+}
+
+.card-title {
+    font-size: 1.5rem;
+    margin-bottom: 0.8rem;
+    color: var(--color-accent);
+}
+
+.card-text {
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+}
+
+/* Área do Carrossel */
+.carousel-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 1rem;
+}
+
+/* Grid Espalhado ("Solto") de Polaroids */
+.scatter-gallery {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.polaroid-container {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 2.5rem;
+    margin-top: 2rem;
+    padding: 1rem;
+}
+
+.polaroid-card {
+    background: white;
+    padding: 12px 12px 40px 12px;
+    /* Reduzido drasticamente para focar na mídia */
+    border-radius: 4px;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.4);
+    position: relative;
+    width: 280px;
+    /* Largura um tiquinho maior pra acomodar o portrait alto */
+    transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.polaroid-card img,
+.polaroid-card video {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    /* Estilo Instax Square: imagem quadrada e mais visibilidade */
+    object-fit: cover;
+    border-radius: 2px;
+    display: block;
+}
+
+/* Containtment da legenda e do botão */
+.caption-container {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 40px;
+    /* Preenche a área branca inferior */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.polaroid-caption {
+    color: #333;
+    text-align: center;
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    font-size: 0.95rem;
+    width: 100%;
+    padding: 0 10px;
+    cursor: text;
+    outline: none;
+    border-bottom: 1px dashed transparent;
+    transition: border 0.3s;
+}
+
+.polaroid-caption:focus {
+    border-bottom: 1px dashed var(--color-primary);
+}
+
+.save-caption-btn {
+    position: absolute;
+    right: -10px;
+    bottom: 5px;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    opacity: 0;
+    transform: scale(0.8) translateY(10px);
+    pointer-events: none;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    z-index: 20;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.save-caption-btn.visible {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    pointer-events: all;
+    cursor: pointer;
+}
+
+/* Rotações Variadas para o Scatter */
+.tilt-left {
+    transform: rotate(-5deg);
+}
+
+.tilt-right {
+    transform: rotate(6deg);
+}
+
+.tilt-left-extreme {
+    transform: rotate(-10deg);
+    margin-top: 1.5rem;
+}
+
+.tilt-right-extreme {
+    transform: rotate(12deg);
+    margin-top: -1.5rem;
+}
+
+.polaroid-card:hover {
+    transform: scale(1.1) rotate(0deg);
+    z-index: 10;
+    box-shadow: 0 15px 30px rgba(0, 0, 0, 0.6);
+}
+
+.carousel-header {
+    font-size: 2rem;
+    margin-bottom: 1.5rem;
+    color: var(--color-primary);
+}
+
+.carousel-container {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 1rem;
+}
+
+.carousel-track-wrapper {
+    overflow: hidden;
+    width: 100%;
+    border-radius: 16px;
+    position: relative;
+}
+
+.carousel-track {
+    display: flex;
+    transition: transform 0.5s ease-in-out;
+    width: 100%;
+}
+
+.carousel-slide {
+    min-width: 100%;
+    display: flex;
+    justify-content: center;
+}
+
+.image-wrapper {
+    width: 100%;
+    padding-top: 60%;
+    /* Aspect ratio mágico para fotos 16:9 ~ 3:2 */
+    position: relative;
+    border-radius: 16px;
+    overflow: hidden;
+}
+
+.image-wrapper img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.image-wrapper:hover img {
+    transform: scale(1.05);
+}
+
+.glass-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--glass-border);
+    color: var(--color-primary);
+    backdrop-filter: var(--blur-md);
+    -webkit-backdrop-filter: var(--blur-md);
+    font-size: 1.5rem;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transition: var(--transition-smooth);
+    flex-shrink: 0;
+}
+
+.glass-btn:hover,
+.glass-btn:focus {
+    background: var(--color-primary);
+    color: #fff;
+    transform: scale(1.1);
+    outline: none;
+    box-shadow: 0 0 15px var(--color-primary);
+}
+
+.keyboard-tip {
+    margin-top: 1.5rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+/* Toast Notifications (Alta Disponibilidade Operacional) */
+.toast-container {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    z-index: 9999;
+}
+
+.toast {
+    background: rgba(15, 15, 20, 0.9);
+    border-left: 4px solid var(--color-primary);
+    backdrop-filter: var(--blur-md);
+    color: #fff;
+    padding: 1rem 1.5rem;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    animation: slideInRight 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+.toast.toast-success {
+    border-color: #00E676;
+}
+
+.toast.toast-info {
+    border-color: var(--color-accent);
+}
+
+.toast.toast-error {
+    border-color: #FF1744;
+}
+
+.toast.fade-out {
+    animation: slideOutRight 0.3s ease-in forwards;
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(100%);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideOutRight {
+    from {
+        opacity: 1;
+        transform: translateX(0);
+    }
+
+    to {
+        opacity: 0;
+        transform: translateX(100%);
+    }
+}
+
+/* Player Flutuante Spotify Translucido - Fixado no Canto Inferior Direito */
+#floating-spotify {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    width: 330px;
+    z-index: 9999;
+    opacity: 0.4;
+    transition: opacity 0.4s ease-in-out, transform 0.4s ease-in-out;
+    border-radius: 12px;
+}
+
+#floating-spotify:hover {
+    opacity: 1;
+    transform: scale(1.05);
+}
+
+/* Polaroides Grandes para Vídeos (Pedido do User) */
+.polaroid-card.video-card {
+    width: 380px;
+    min-height: 400px;
+}
+
+.polaroid-card.video-card video {
+    aspect-ratio: 9 / 16;
+    /* Força o vídeo em portrait completo */
+    height: auto;
+}
+
+/* Pseudo Grid Variado ("Solto") agindo em FULL WIDTH (Fora do painel) */
+.pseudo-grid {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 3rem;
+    padding: 3rem 1rem;
+    width: 100vw;
+    max-width: 1600px;
+}
+
+/* Espalhando de modo flexível com margens pseudo-aleatórias baseadas em odd/even (sem quebrar responsividade) */
+.pseudo-grid .polaroid-card:nth-child(even) {
+    margin-top: 100px;
+}
+
+.pseudo-grid .polaroid-card:nth-child(3n) {
+    margin-top: -60px;
+}
+
+@media (max-width: 768px) {
+
+    /* Desativa saltos em celulares para organizar numa só linha linear fofa */
+    .pseudo-grid .polaroid-card:nth-child(even),
+    .pseudo-grid .polaroid-card:nth-child(3n) {
+        margin-top: 20px;
+    }
+}
+
+/* Animações Auxiliares: Fade in On Scroll */
+.opacity-0 {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+}
+
+.fade-in-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Responsividade (Mobile First Ajustado) */
+@media (max-width: 768px) {
+    #floating-spotify {
+        display: none;
+    }
+
+    .hero-title {
+        font-size: 2.2rem;
+    }
+
+    .glass-panel {
+        padding: 1.5rem 0.8rem;
+        margin: 0.5rem;
+    }
+
+    .toast-container {
+        bottom: 1rem;
+        right: 1rem;
+        left: 1rem;
+        align-items: center;
+    }
+
+    .toast {
+        width: 90%;
+        left: 5%;
+        text-align: center;
+    }
+}
+
+/* Mini Player de Música */
+.music-toggle-btn {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: var(--blur-md);
+    -webkit-backdrop-filter: var(--blur-md);
+    color: var(--text-light);
+    font-size: 1.4rem;
+    cursor: pointer;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+    transition: transform 0.3s, background 0.3s;
+}
+
+.music-toggle-btn:hover {
+    transform: scale(1.1);
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.music-toggle-btn.playing {
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3); }
+    50% { box-shadow: 0 8px 25px rgba(240, 98, 146, 0.5); }
+}

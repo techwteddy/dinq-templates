@@ -1,0 +1,21 @@
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Local Dev Scripts
+# Mantemos o start_jarvis.bat pois ele faz parte da UX do desenvolvedor

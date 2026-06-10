@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Interactive Anniversary Template - Modelo Interativo">
+    <title>Interactive Anniversary Template 🎂</title>
+    <!-- Fontes Premium -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- Folha de Estilos -->
+    <link rel="stylesheet" href="./css/style.css">
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="./imgs/favicon.png">
+</head>
+
+<body>
+    <!-- Mini Player de Música -->
+    <audio id="bg-music" loop preload="auto">
+        <source src="./music/musica.mp3" type="audio/mpeg">
+    </audio>
+    <button id="music-toggle" class="music-toggle-btn" aria-label="Controlar música">
+        <span id="music-icon">▶️</span>
+    </button>
+
+    <!-- Sistema de Toast Notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Main Content com foco em Glassmorphism -->
+    <main class="glass-panel" role="main">
+        <header class="hero-section">
+            <h1 class="hero-title">Um Dia Especial</h1>
+            <p class="hero-subtitle">Comemorando cada momento</p>
+        </header>
+
+        <!-- Nova Seção: Carta Dedicatória Interativa (Envelope) -->
+        <section class="letter-section" aria-label="Carta de Aniversário">
+            <div class="envelope-wrapper" id="love-envelope">
+                <div class="envelope">
+                    <div class="envelope-flap"></div>
+                    <div class="envelope-pocket"></div>
+                    <!-- Selo que pulsa pra clicar -->
+                    <div class="envelope-seal">💖</div>
+                    <div class="letter-paper">
+                        <button class="close-letter-btn" id="close-letter-btn" aria-label="Fechar carta">×</button>
+                        <div class="letter-content" contenteditable="true" id="editable-letter">
+                            <p>Esta é uma carta de exemplo! 💌</p><br>
+                            <p>Aqui você pode escrever uma mensagem super especial para quem você ama. Este projeto foi criado para transformar palavras em uma experiência inesquecível.</p><br>
+                            <p>Aproveite cada funcionalidade: a música de fundo, as fotos que surgem ao rolar a página e essa cartinha interativa que se abre como mágica.</p><br>
+                            <p>Desejamos um feliz aniversário e que este dia seja repleto de alegrias e memórias incríveis!</p><br>
+                            <p>Com muito carinho,<br>Equipe do Projeto ❤️❤️❤️</p>
+                        </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+            <p style="text-align: center; color: rgba(255,255,255,0.4); margin-top: 1rem; font-size: 0.9rem; pointer-events: none;">
+                Toque no envelope para abrir 💌</p>
+        </section>
+    </main>
+
+    <!-- Galeria de Momentos Soltos (Polaroids) -->
+    <section class="scatter-gallery" aria-label="Momentos Soltos">
+        <h3 class="carousel-header">Nossas Memórias</h3>
+
+        <!-- O JS injetará as 20 fotos + vídeos aqui misturados com a bagunça! -->
+        <div class="polaroid-wrapper pseudo-grid" id="polaroid-grid">
+            <!-- Loading placeholder -->
+            <p style="text-align: center; width: 100%;">Carregando nossas memórias...</p>
+        </div>
+    </section>
+
+
+
+    <script src="./js/main.js" defer></script>
+
+    <!-- DEV ONLY: Auto-Refresh simples -->
+    <script>
+        // Apenas para desenvolvimento local. Desativado automaticamente em produção.
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            setInterval(function () {
+                fetch('/').then(res => {
+                    const newMod = res.headers.get('Last-Modified');
+                    if (!window.lastMod) window.lastMod = newMod;
+                    else if (window.lastMod !== newMod) window.location.reload();
+                });
+            }, 2000);
+        }
+    </script>
+</body>
+
+</html>

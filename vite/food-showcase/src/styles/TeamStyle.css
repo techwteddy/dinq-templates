@@ -1,0 +1,171 @@
+/* Team Card Styles */
+.team-card {
+  background: white;
+  border-radius: 15px;
+  transition: all 0.3s ease;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+}
+
+.team-card:hover {
+  transform: translateY(-10px);
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.1);
+}
+
+.team-card:hover .team-card-overlay {
+  opacity: 1;
+}
+
+.team-card-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, rgba(220, 53, 69, 0.1) 0%, rgba(220, 53, 69, 0.05) 100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 0;
+}
+
+.team-img-wrapper {
+  position: relative;
+  width: 150px;
+  height: 150px;
+  margin: 0 auto;
+}
+
+.team-img-wrapper img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: all 0.3s ease;
+  position: relative;
+  z-index: 2;
+}
+
+.team-img-hover-effect {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  right: -5px;
+  bottom: -5px;
+  background: linear-gradient(45deg, #dc3545, #fd7e14);
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 1;
+}
+
+.team-card:hover .team-img-hover-effect {
+  opacity: 0.3;
+}
+
+.team-icon-container {
+  position: absolute;
+  bottom: -15px;
+  right: 10px;
+  background: white;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  z-index: 3;
+  color: #dc3545;
+  font-size: 1.25rem;
+  transition: all 0.3s ease;
+}
+
+.team-card:hover .team-icon-container {
+  transform: scale(1.1);
+  color: white;
+  background: #dc3545;
+}
+
+.learn-more-btn {
+  position: relative;
+  z-index: 1;
+  transition: all 0.3s ease;
+  border-width: 2px;
+}
+
+.learn-more-btn:hover {
+  background: #dc3545;
+  color: white;
+}
+
+.learn-more-btn .btn-arrow {
+  transition: transform 0.3s ease;
+}
+
+.learn-more-btn:hover .btn-arrow {
+  transform: translateX(3px);
+}
+
+/* Modal Styles */
+.team-modal .modal-content {
+  border-radius: 20px;
+  overflow: hidden;
+  border: none;
+}
+
+.modal-img-container {
+  position: relative;
+  width: 180px;
+  height: 180px;
+}
+
+.modal-img-container img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 5px solid white;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+.modal-icon-bg {
+  position: absolute;
+  bottom: -15px;
+  right: -15px;
+  background: #dc3545;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 1.5rem;
+  box-shadow: 0 5px 20px rgba(220, 53, 69, 0.3);
+}
+
+.modal-bio {
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+
+/* Responsive adjustments */
+@media (max-width: 767.98px) {
+  .team-img-wrapper {
+    width: 120px;
+    height: 120px;
+  }
+  
+  .team-icon-container {
+    width: 40px;
+    height: 40px;
+    font-size: 1rem;
+    bottom: -10px;
+  }
+  
+  .modal-img-container {
+    width: 140px;
+    height: 140px;
+    margin-bottom: 20px;
+  }
+}
