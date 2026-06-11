@@ -1,0 +1,18 @@
+[
+  {
+    "id": "rev-1",
+    "courseId": "typescript-mastery",
+    "author": "Alice Johnson",
+    "rating": 5,
+    "comment": "Incredible course! The section on generics saved me hours of debugging.",
+    "date": "2024-01-15"
+  },
+  {
+    "id": "rev-2",
+    "courseId": "react-advanced",
+    "author": "Bob Smith",
+    "rating": 4,
+    "comment": "Great depth on patterns, although the performance section is quite dense.",
+    "date": "2024-01-20"
+  }
+]

@@ -1,0 +1,41 @@
+Course Placeholder Images Attributions:
+- course-art110.jpg: Unsplash - Artist brushes and paints (ID: 1513364776144-60967b0f800f)
+- course-sci101.jpg: Unsplash - Scientific laboratory equipment (ID: 1532094349884-543bc11b234d)
+- course-cs101.jpg: Unsplash - Laptop with code on screen (ID: 1517694712202-14dd9538aa97)
+- course-math201.jpg: Unsplash - Mathematical equations on a blackboard (ID: 1635070041078-e363dbe005cb)
+- course-mus100.jpg: Unsplash - Musical instruments on a stage (ID: 1511379938547-c1f69419868d)
+- course-bus101.jpg: Unsplash - Business analytics and data (ID: 1460925895917-afdab827c52f)
+- course-lang101.jpg: Unsplash - Books and notes for language learning (ID: 1456513080510-7bf3a84b82f8)
+- course-edu101.jpg: Unsplash - Classroom (ID: 1509062522246-3755977927d7)
+- course-bus350.jpg: Unsplash - Library/Study (ID: 1501503069356-3c6b82a17d89)
+
+Faculty Placeholder Images Attributions:
+- faculty-1.jpg: Unsplash - Professional woman in office setting (ID: 1573496359142-b8d87734a5a2)
+- faculty-2.jpg: Unsplash - Professional man portrait (ID: 1472099645785-5658abf4ff4e)
+- faculty-3.jpg: Unsplash - Diverse professional woman (ID: 1580489944761-15a19d654956)
+- faculty-4.jpg: Unsplash - Professional man smiling (ID: 1507003211169-0a1dd7228f2d)
+- faculty-5.jpg: Unsplash - Professional woman with glasses (ID: 1573497019940-1c28c88b4f3e)
+- faculty-6.jpg: Unsplash - Diverse professional man (ID: 1500648767791-00dcc994a43e)
+- faculty-7.jpg: Unsplash - Professional woman portrait (ID: 1567532939604-b6b5b0db2604)
+- faculty-8.jpg: Unsplash - Professional man in suit (ID: 1519085360753-af0119f7cbe7)
+
+Blog Placeholder Images Attributions:
+- alumni-stories.jpg: Unsplash - Library/Study (ID: 1501503069356-3c6b82a17d89)
+- apps-for-social-good.jpg: Unsplash - Collaborating on laptop (ID: 1531206715517-5c0ba140b2b8)
+- business-ethics-2026.jpg: Unsplash - Business analytics and data (ID: 1460925895917-afdab827c52f)
+- canvas-to-code.jpg: Unsplash - Design to code (ID: 1581291518633-83b4ebd1d83e)
+- meet-dr-rodriguez.jpg: Unsplash - Professor (ID: 1544717305-2782549b5136)
+- vr-labs-science-edu.jpg: Unsplash - Virtual Reality (ID: 1592478411213-6153e4ebc07d)
+- sustainability-on-campus.jpg: Unsplash - Green leaves (ID: 1532601224476-15c79f2f7a51)
+- interdisciplinary-learning.jpg: Unsplash - Students (ID: 1522202176988-66273c2fd55f)
+- micro-credentials-rise.jpg: Unsplash - Digital badge (ID: 1586281380117-5a60ae2050cc)
+- ai-in-classroom.jpg: Unsplash - AI/Circuitry (ID: 1550751827-4bd374c3f58b)
+- financial-wellness-101.jpg: Unsplash - Finance (ID: 1554224155-6726b3ff858f)
+- art-of-note-taking.jpg: Unsplash - Writing (ID: 1455390582262-044cdead277a)
+- how-to-land-internship.jpg: Unsplash - Interview (ID: 1434030216411-0b793f4b4173)
+- balancing-work-life-code.jpg: Unsplash - Laptop coffee (ID: 1499750310107-5fef28a66643)
+- 5-study-techniques.jpg: Unsplash - Books and study (ID: 1456513080510-7bf3a84b82f8)
+
+Page-Level Hero Images Attributions:
+- hero-home.jpg: Unsplash - Library/Study (ID: 1501503069356-3c6b82a17d89)
+- hero-about.jpg: Unsplash - Classroom (ID: 1509062522246-3755977927d7)

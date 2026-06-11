@@ -1,0 +1,12 @@
+services:
+  app:
+    image: oven/bun:1
+    working_dir: /app
+    volumes:
+      - ../../:/app
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=development
+    command: >
+      bash -c "bun install && bun run dev"

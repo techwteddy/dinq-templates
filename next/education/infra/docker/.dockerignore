@@ -1,0 +1,12 @@
+node_modules
+.next
+.velite
+build
+dist
+.env*.local
+.vercel
+.git
+.gitignore
+.dockerignore
+README.md
+LICENSE

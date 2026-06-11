@@ -1,0 +1,16 @@
+{
+  "name": "EduPlatform",
+  "short_name": "EduPlatform",
+  "description": "A comprehensive education platform template for courses, faculty, and blog.",
+  "start_url": "/education-website-template/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0447a4",
+  "icons": [
+    {
+      "src": "/education-website-template/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+  - repo: local
+    hooks:
+      - id: format
+        name: format
+        entry: bun run format
+        language: system
+        files: \.(js|jsx|ts|tsx|json|css|md|mdx)$
+      - id: lint
+        name: lint
+        entry: bunx eslint --fix
+        language: system
+        files: \.(js|jsx|ts|tsx)$
+      - id: secretlint
+        name: secretlint
+        entry: bun run check-secrets
+        language: system
+        files: .*
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', 'infra/config/.secrets.baseline']
