@@ -1,0 +1,679 @@
+import Image from "next/image";
+import { Pencil, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import type { ColumnDef, SortDirection } from "@/lib/column-config";
+export type { SortDirection } from "@/lib/column-config";
+import type { CryptoAssetWithPositions, CoinGeckoPriceData } from "@/lib/types";
+import { formatCurrency, formatQuantity } from "@/lib/format";
+
+// ── Computed row type (asset + price data) ───────────────────
+
+export interface CryptoRow {
+  id: string;
+  asset: CryptoAssetWithPositions;
+  priceUsd: number;
+  priceInBase: number;
+  change24h: number;
+  totalQty: number;
+  valueInBase: number;
+  weightedApy: number;
+}
+
+// ── Acquisition type display maps ───────────────────────────
+
+export const ACQUISITION_LABELS: Record<string, string> = {
+  bought: "Bought",
+  swapped: "Swapped",
+  mined: "Mined",
+  staked: "Staked",
+  airdrop: "Airdrop",
+  other: "Other",
+};
+
+export const ACQUISITION_COLORS: Record<string, string> = {
+  bought: "text-blue-400",
+  swapped: "text-cyan-400",
+  mined: "text-amber-400",
+  staked: "text-purple-400",
+  airdrop: "text-emerald-400",
+  other: "text-zinc-400",
+};
+
+// ── Rotating palette for dynamic groups (wallets, brokers) ──
+
+// ── Position-level group types for group-by-source mode ─────
+
+/** One asset's positions sharing the same acquisition method within a group */
+export interface PositionGroupEntry {
+  row: CryptoRow;
+  positions: CryptoAssetWithPositions["positions"];
+  groupQty: number;
+  groupValue: number;
+}
+
+/** A group of entries for one acquisition method */
+export interface CryptoPositionGroup {
+  acquisitionMethod: string;
+  label: string;
+  entries: PositionGroupEntry[];
+  totalValue: number;
+  entryCount: number;
+}
+
+/** Get the dominant acquisition method for an asset's positions (used by source column in flat mode) */
+function getDominantMethod(positions: { acquisition_method?: string }[]): string {
+  const methods = positions.map((p) => p.acquisition_method ?? "bought");
+  const unique = [...new Set(methods)];
+  if (unique.length === 0) return "bought";
+  if (unique.length === 1) return unique[0];
+  return "mixed";
+}
+
+/**
+ * Build position-level groups: each asset's positions are split by acquisition_method,
+ * so an asset with bought + mined positions appears in both the "Bought" and "Mined" groups.
+ */
+export function buildCryptoPositionGroups(rows: CryptoRow[]): CryptoPositionGroup[] {
+  const groupMap = new Map<string, PositionGroupEntry[]>();
+
+  for (const row of rows) {
+    // Split this asset's positions by method
+    const byMethod = new Map<string, CryptoAssetWithPositions["positions"]>();
+    for (const pos of row.asset.positions) {
+      const method = pos.acquisition_method ?? "bought";
+      const arr = byMethod.get(method) ?? [];
+      arr.push(pos);
+      byMethod.set(method, arr);
+    }
+
+    // Create one entry per (asset, method) pair
+    for (const [method, positions] of byMethod) {
+      const groupQty = positions.reduce((sum, p) => sum + p.quantity, 0);
+      const groupValue = groupQty * row.priceInBase;
+
+      const entry: PositionGroupEntry = { row, positions, groupQty, groupValue };
+      const existing = groupMap.get(method) ?? [];
+      existing.push(entry);
+      groupMap.set(method, existing);
+    }
+  }
+
+  const groups: CryptoPositionGroup[] = [];
+  for (const [method, entries] of groupMap) {
+    const totalValue = entries.reduce((sum, e) => sum + e.groupValue, 0);
+    groups.push({
+      acquisitionMethod: method,
+      label: ACQUISITION_LABELS[method] ?? method,
+      entries: entries.sort((a, b) => b.groupValue - a.groupValue),
+      totalValue,
+      entryCount: entries.length,
+    });
+  }
+
+  groups.sort((a, b) => b.totalValue - a.totalValue);
+  return groups;
+}
+
+// ── Position-level group types for group-by-wallet mode ─────
+
+/** One asset's positions at a specific wallet within a group */
+export interface WalletGroupEntry {
+  row: CryptoRow;
+  positions: CryptoAssetWithPositions["positions"];
+  groupQty: number;
+  groupValue: number;
+}
+
+/** A group of entries for one wallet */
+export interface CryptoWalletGroup {
+  walletName: string;
+  walletType: string;  // "custodial" | "non_custodial" (or mixed → "mixed")
+  entries: WalletGroupEntry[];
+  totalValue: number;
+  entryCount: number;
+}
+
+/**
+ * Build position-level groups by wallet: each asset's positions are split by wallet_name,
+ * so an asset with positions in multiple wallets appears in multiple wallet groups.
+ */
+export function buildCryptoWalletGroups(rows: CryptoRow[]): CryptoWalletGroup[] {
+  const groupMap = new Map<string, WalletGroupEntry[]>();
+  const walletTypeMap = new Map<string, Set<string>>();
+
+  for (const row of rows) {
+    // Split this asset's positions by wallet
+    const byWallet = new Map<string, CryptoAssetWithPositions["positions"]>();
+    for (const pos of row.asset.positions) {
+      const wallet = pos.wallet_name ?? "Unknown";
+      const arr = byWallet.get(wallet) ?? [];
+      arr.push(pos);
+      byWallet.set(wallet, arr);
+
+      // Track wallet types for the group
+      const types = walletTypeMap.get(wallet) ?? new Set();
+      types.add(pos.wallet_type ?? "custodial");
+      walletTypeMap.set(wallet, types);
+    }
+
+    // Create one entry per (asset, wallet) pair
+    for (const [wallet, positions] of byWallet) {
+      const groupQty = positions.reduce((sum, p) => sum + p.quantity, 0);
+      const groupValue = groupQty * row.priceInBase;
+
+      const entry: WalletGroupEntry = { row, positions, groupQty, groupValue };
+      const existing = groupMap.get(wallet) ?? [];
+      existing.push(entry);
+      groupMap.set(wallet, existing);
+    }
+  }
+
+  const groups: CryptoWalletGroup[] = [];
+  for (const [walletName, entries] of groupMap) {
+    const totalValue = entries.reduce((sum, e) => sum + e.groupValue, 0);
+    const types = walletTypeMap.get(walletName);
+    const walletType = types && types.size === 1 ? [...types][0] : "mixed";
+
+    groups.push({
+      walletName,
+      walletType,
+      entries: entries.sort((a, b) => b.groupValue - a.groupValue),
+      totalValue,
+      entryCount: entries.length,
+    });
+  }
+
+  groups.sort((a, b) => b.totalValue - a.totalValue);
+  return groups;
+}
+
+// ── Asset-level group types for group-by-chain mode ──────────
+
+/** A group of crypto assets sharing the same chain/network */
+export interface CryptoChainGroup {
+  chain: string;
+  label: string;
+  rows: CryptoRow[];
+  totalValue: number;
+  entryCount: number;
+}
+
+/**
+ * Build asset-level groups by chain. Each asset belongs to exactly one group.
+ * Assets without a chain go into "Uncategorized".
+ */
+export function buildCryptoChainGroups(rows: CryptoRow[]): CryptoChainGroup[] {
+  const groupMap = new Map<string, CryptoRow[]>();
+
+  for (const row of rows) {
+    const key = row.asset.chain?.trim() || "__uncategorized__";
+    const arr = groupMap.get(key) ?? [];
+    arr.push(row);
+    groupMap.set(key, arr);
+  }
+
+  const groups: CryptoChainGroup[] = [];
+  for (const [key, groupRows] of groupMap) {
+    const totalValue = groupRows.reduce((sum, r) => sum + r.valueInBase, 0);
+    groups.push({
+      chain: key,
+      label: key === "__uncategorized__" ? "Uncategorized" : key,
+      rows: groupRows.sort((a, b) => b.valueInBase - a.valueInBase),
+      totalValue,
+      entryCount: groupRows.length,
+    });
+  }
+
+  groups.sort((a, b) => b.totalValue - a.totalValue);
+  return groups;
+}
+
+// ── Asset-level group types for group-by-subcategory mode ────
+
+/** A group of crypto assets sharing the same subcategory */
+export interface CryptoSubcategoryGroup {
+  subcategory: string;
+  label: string;
+  rows: CryptoRow[];
+  totalValue: number;
+  entryCount: number;
+}
+
+/**
+ * Build asset-level groups by subcategory. Each asset belongs to exactly one group.
+ * Assets without a subcategory go into "Uncategorized".
+ */
+export function buildCryptoSubcategoryGroups(rows: CryptoRow[]): CryptoSubcategoryGroup[] {
+  const groupMap = new Map<string, CryptoRow[]>();
+
+  for (const row of rows) {
+    const key = row.asset.subcategory?.trim() || "__uncategorized__";
+    const arr = groupMap.get(key) ?? [];
+    arr.push(row);
+    groupMap.set(key, arr);
+  }
+
+  const groups: CryptoSubcategoryGroup[] = [];
+  for (const [key, groupRows] of groupMap) {
+    const totalValue = groupRows.reduce((sum, r) => sum + r.valueInBase, 0);
+    groups.push({
+      subcategory: key,
+      label: key === "__uncategorized__" ? "Uncategorized" : key,
+      rows: groupRows.sort((a, b) => b.valueInBase - a.valueInBase),
+      totalValue,
+      entryCount: groupRows.length,
+    });
+  }
+
+  groups.sort((a, b) => b.totalValue - a.totalValue);
+  return groups;
+}
+
+// ── Position-level group types for group-by-custody mode ────
+
+/** A group of entries for one custody type (exchange vs self-custody) */
+export interface CryptoCustodyPositionGroup {
+  custodyType: string;
+  label: string;
+  color: string;
+  entries: PositionGroupEntry[];
+  totalValue: number;
+  entryCount: number;
+}
+
+const CUSTODY_META: Record<string, { label: string; color: string }> = {
+  custodial: { label: "Exchange", color: "text-sky-400" },
+  non_custodial: { label: "Self-custody", color: "text-violet-400" },
+};
+
+/**
+ * Build position-level groups by custody type (wallet_type).
+ * An asset with positions on both exchange and self-custody appears in both groups.
+ */
+export function buildCryptoCustodyPositionGroups(rows: CryptoRow[]): CryptoCustodyPositionGroup[] {
+  const groupMap = new Map<string, PositionGroupEntry[]>();
+
+  for (const row of rows) {
+    // Split this asset's positions by wallet_type
+    const byType = new Map<string, CryptoAssetWithPositions["positions"]>();
+    for (const pos of row.asset.positions) {
+      const wt = pos.wallet_type ?? "custodial";
+      const arr = byType.get(wt) ?? [];
+      arr.push(pos);
+      byType.set(wt, arr);
+    }
+
+    // Create one entry per (asset, custody type) pair
+    for (const [wt, positions] of byType) {
+      const groupQty = positions.reduce((sum, p) => sum + p.quantity, 0);
+      const groupValue = groupQty * row.priceInBase;
+
+      const entry: PositionGroupEntry = { row, positions, groupQty, groupValue };
+      const existing = groupMap.get(wt) ?? [];
+      existing.push(entry);
+      groupMap.set(wt, existing);
+    }
+  }
+
+  // Fixed order: exchange first, self-custody second
+  const order = ["custodial", "non_custodial"];
+  const groups: CryptoCustodyPositionGroup[] = [];
+  for (const wt of order) {
+    const entries = groupMap.get(wt);
+    if (!entries || entries.length === 0) continue;
+    const meta = CUSTODY_META[wt] ?? { label: wt, color: "text-zinc-400" };
+    const totalValue = entries.reduce((sum, e) => sum + e.groupValue, 0);
+    groups.push({
+      custodyType: wt,
+      label: meta.label,
+      color: meta.color,
+      entries: entries.sort((a, b) => b.groupValue - a.groupValue),
+      totalValue,
+      entryCount: entries.length,
+    });
+  }
+
+  // Append any unexpected types not in the fixed order
+  for (const [wt, entries] of groupMap) {
+    if (order.includes(wt)) continue;
+    const totalValue = entries.reduce((sum, e) => sum + e.groupValue, 0);
+    groups.push({
+      custodyType: wt,
+      label: wt,
+      color: "text-zinc-400",
+      entries: entries.sort((a, b) => b.groupValue - a.groupValue),
+      totalValue,
+      entryCount: entries.length,
+    });
+  }
+
+  return groups;
+}
+
+// ── Formatters ───────────────────────────────────────────────
+
+// ── Build rows from assets + prices ──────────────────────────
+
+export function buildCryptoRows(
+  assets: CryptoAssetWithPositions[],
+  prices: CoinGeckoPriceData,
+  currencyKey: "usd" | "eur",
+  changeKey: "usd_24h_change" | "eur_24h_change"
+): CryptoRow[] {
+  // Exclude assets with no positions (e.g. added with zero quantity)
+  const rows = assets.filter((a) => a.positions.length > 0).map((asset) => {
+    const price = prices[asset.coingecko_id];
+    const priceUsd = price?.usd ?? 0;
+    const priceInBase = price?.[currencyKey] ?? 0;
+    const change24h = price?.[changeKey] ?? 0;
+    const totalQty = asset.positions.reduce((sum, p) => sum + p.quantity, 0);
+    const valueInBase = totalQty * priceInBase;
+
+    // Weighted average APY: Σ(qty × apy) / Σ(qty)
+    const apySum = asset.positions.reduce((sum, p) => sum + p.quantity * (p.apy ?? 0), 0);
+    const weightedApy = totalQty > 0 ? apySum / totalQty : 0;
+
+    return { id: asset.id, asset, priceUsd, priceInBase, change24h, totalQty, valueInBase, weightedApy };
+  });
+
+  // Sort by value descending
+  rows.sort((a, b) => b.valueInBase - a.valueInBase);
+  return rows;
+}
+
+// ── Sorting ───────────────────────────────────────────────────
+
+export type CryptoSortKey = "value" | "name" | "change" | "source" | "chain" | "subcategory" | "apy";
+
+export const DEFAULT_SORT_KEY: CryptoSortKey = "value";
+export const DEFAULT_SORT_DIR: SortDirection = "desc";
+
+export const CRYPTO_SORT_OPTIONS: { key: CryptoSortKey; label: string; defaultDir: SortDirection }[] = [
+  { key: "value", label: "Value", defaultDir: "desc" },
+  { key: "name", label: "Name", defaultDir: "asc" },
+  { key: "change", label: "24h %", defaultDir: "desc" },
+  { key: "source", label: "Source", defaultDir: "asc" },
+  { key: "chain", label: "Chain", defaultDir: "asc" },
+  { key: "subcategory", label: "Type", defaultDir: "asc" },
+  { key: "apy", label: "APY", defaultDir: "desc" },
+];
+
+/** Maps column keys to sort keys (for clickable desktop headers) */
+export const COLUMN_TO_SORT: Record<string, CryptoSortKey | undefined> = {
+  asset: "name",
+  price: "change",
+  value: "value",
+  source: "source",
+  chain: "chain",
+  subcategory: "subcategory",
+  apy: "apy",
+};
+
+/** Sort crypto rows by key and direction */
+export function sortCryptoRows(
+  rows: CryptoRow[],
+  key: CryptoSortKey,
+  dir: SortDirection
+): CryptoRow[] {
+  return [...rows].sort((a, b) => {
+    let av: string | number, bv: string | number;
+    switch (key) {
+      case "value": av = a.valueInBase; bv = b.valueInBase; break;
+      case "name": av = a.asset.name.toLowerCase(); bv = b.asset.name.toLowerCase(); break;
+      case "change": av = a.change24h; bv = b.change24h; break;
+      case "source": {
+        av = getDominantMethod(a.asset.positions);
+        bv = getDominantMethod(b.asset.positions);
+        break;
+      }
+      case "chain": {
+        av = (a.asset.chain ?? "").toLowerCase();
+        bv = (b.asset.chain ?? "").toLowerCase();
+        break;
+      }
+      case "subcategory": {
+        av = (a.asset.subcategory ?? "").toLowerCase();
+        bv = (b.asset.subcategory ?? "").toLowerCase();
+        break;
+      }
+      case "apy": {
+        av = a.weightedApy;
+        bv = b.weightedApy;
+        break;
+      }
+    }
+    if (av < bv) return dir === "asc" ? -1 : 1;
+    if (av > bv) return dir === "asc" ? 1 : -1;
+    return 0;
+  });
+}
+
+// ── Column definitions ───────────────────────────────────────
+
+export function getCryptoColumns(handlers: {
+  onEdit: (asset: CryptoAssetWithPositions) => void;
+  onDelete: (id: string, name: string) => void;
+  isExpanded: (id: string) => boolean;
+  toggleExpand: (id: string) => void;
+}): ColumnDef<CryptoRow>[] {
+  return [
+    {
+      key: "asset",
+      label: "Asset",
+      header: "Asset",
+      pinned: "left",
+      align: "left",
+      renderCell: (row) => (
+        <button
+          onClick={() => handlers.toggleExpand(row.asset.id)}
+          aria-expanded={handlers.isExpanded(row.asset.id)}
+          aria-label={`${handlers.isExpanded(row.asset.id) ? "Collapse" : "Expand"} ${row.asset.name}`}
+          className="flex items-center gap-2 text-left min-w-0"
+        >
+          {handlers.isExpanded(row.asset.id) ? (
+            <ChevronDown aria-hidden="true" className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+          ) : (
+            <ChevronRight aria-hidden="true" className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+          )}
+          {row.asset.image_url ? (
+            <Image src={row.asset.image_url} alt="" width={20} height={20} className="rounded-full bg-zinc-800 shrink-0" />
+          ) : (
+            <div className="w-5 h-5 rounded-full bg-zinc-800 shrink-0" />
+          )}
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-zinc-200 truncate block">
+              {row.asset.name}
+            </span>
+            <span className="text-xs text-zinc-400 uppercase">
+              {row.asset.ticker}
+            </span>
+          </div>
+        </button>
+      ),
+    },
+    {
+      key: "custody",
+      label: "Custody",
+      header: "Custody",
+      align: "left",
+      width: "w-24",
+      hiddenBelow: "lg",
+      renderCell: (row) => {
+        const positions = row.asset.positions;
+        if (positions.length === 0)
+          return <span className="text-xs text-zinc-400">—</span>;
+
+        const types = new Set(positions.map((p) => p.wallet_type));
+
+        if (types.size === 1) {
+          const wt = [...types][0];
+          const info: Record<string, { label: string; color: string }> = {
+            custodial: { label: "Exchange", color: "text-sky-400" },
+            non_custodial: { label: "Self-custody", color: "text-violet-400" },
+          };
+          const match = info[wt];
+          return match ? (
+            <span className={`text-xs font-medium ${match.color}`}>{match.label}</span>
+          ) : (
+            <span className="text-xs text-zinc-400">—</span>
+          );
+        }
+
+        return <span className="text-xs font-medium text-zinc-400">Mixed</span>;
+      },
+    },
+    {
+      key: "source",
+      label: "Source",
+      header: "Source",
+      align: "left",
+      width: "w-24",
+      hiddenBelow: "xl",
+      renderCell: (row) => {
+        const method = getDominantMethod(row.asset.positions);
+        if (row.asset.positions.length === 0) {
+          return <span className="text-xs text-zinc-400">—</span>;
+        }
+        return (
+          <span
+            className={`text-xs font-medium ${ACQUISITION_COLORS[method] ?? "text-zinc-400"}`}
+          >
+            {ACQUISITION_LABELS[method] ?? method}
+          </span>
+        );
+      },
+    },
+    {
+      key: "chain",
+      label: "Chain",
+      header: "Chain",
+      align: "left",
+      width: "w-24",
+      hiddenBelow: "xl",
+      renderCell: (row) => {
+        const chain = row.asset.chain?.trim();
+        return chain ? (
+          <span className="text-xs text-zinc-400">{chain}</span>
+        ) : (
+          <span className="text-xs text-zinc-400">—</span>
+        );
+      },
+    },
+    {
+      key: "subcategory",
+      label: "Type",
+      header: "Type",
+      align: "left",
+      width: "w-28",
+      hiddenBelow: "xl",
+      renderCell: (row) => {
+        const sub = row.asset.subcategory?.trim();
+        return sub ? (
+          <span className="text-xs text-zinc-400">{sub}</span>
+        ) : (
+          <span className="text-xs text-zinc-400">—</span>
+        );
+      },
+    },
+    {
+      key: "apy",
+      label: "APY",
+      header: "APY",
+      align: "right",
+      width: "w-20",
+      hiddenBelow: "xl",
+      renderCell: (row) =>
+        row.weightedApy > 0 ? (
+          <span className="text-xs text-emerald-400 font-medium tabular-nums">
+            {row.weightedApy.toFixed(row.weightedApy % 1 === 0 ? 0 : 2)}%
+          </span>
+        ) : (
+          <span className="text-xs text-zinc-400">—</span>
+        ),
+    },
+    {
+      key: "price",
+      label: "Price",
+      header: "Price",
+      align: "right",
+      width: "w-32",
+      renderCell: (row) =>
+        row.priceUsd > 0 ? (
+          <div className="tabular-nums">
+            <span className="text-sm text-zinc-300">
+              {row.priceUsd >= 1
+                ? formatCurrency(row.priceUsd, "USD")
+                : `$${row.priceUsd.toFixed(6)}`}
+            </span>
+            {row.change24h !== 0 && (
+              <span
+                className={`block text-xs ${
+                  row.change24h >= 0 ? "text-emerald-400" : "text-red-400"
+                }`}
+              >
+                {row.change24h >= 0 ? "+" : ""}
+                {row.change24h.toFixed(2)}%
+              </span>
+            )}
+          </div>
+        ) : (
+          <span className="text-xs text-zinc-400">No data</span>
+        ),
+    },
+    {
+      key: "holdings",
+      label: "Holdings",
+      header: "Holdings",
+      align: "right",
+      width: "w-32",
+      renderCell: (row) => (
+        <span className="text-xs text-zinc-400 tabular-nums">
+          {row.totalQty > 0 ? formatQuantity(row.totalQty, 8) : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "value",
+      label: "Value",
+      header: "Value",
+      align: "right",
+      width: "w-28",
+      renderHeader: (ctx) =>
+        `Value (${ctx.primaryCurrency})`,
+      renderCell: (row, ctx) => (
+        <span className="text-sm font-medium text-zinc-200 tabular-nums">
+          {row.valueInBase > 0
+            ? formatCurrency(row.valueInBase, ctx.primaryCurrency)
+            : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      header: "",
+      pinned: "right",
+      align: "right",
+      width: "w-20",
+      renderCell: (row) => (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            onClick={() => handlers.onEdit(row.asset)}
+            aria-label={`Edit positions for ${row.asset.name}`}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-blue-400 hover:bg-zinc-800 transition-colors"
+            title="Edit positions"
+          >
+            <Pencil aria-hidden="true" className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => handlers.onDelete(row.asset.id, row.asset.name)}
+            aria-label={`Remove ${row.asset.name}`}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-red-400 hover:bg-zinc-800 transition-colors"
+            title="Remove asset"
+          >
+            <Trash2 aria-hidden="true" className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ),
+    },
+  ];
+}

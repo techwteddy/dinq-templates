@@ -1,0 +1,230 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════
+   Semantic tokens — referenced by components and non-Tailwind styles.
+   Each theme overrides these alongside the zinc remap.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --background: var(--color-zinc-950);
+  --foreground: var(--color-zinc-100);
+  --scrollbar-thumb: #3f3f46;
+  --chart-stroke: #3b82f6;
+  --chart-fill: rgba(59, 130, 246, 0.08);
+  --chart-tick: #71717a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/* ─── cmdk command palette overrides ─── */
+[cmdk-group-heading] {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-zinc-500);
+  padding: 0.375rem 0.75rem;
+  user-select: none;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   Theme: Zinc Dark (default)
+   No overrides needed — uses Tailwind's built-in zinc scale.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════
+   Theme: Slate Dark — deeper blue-gray, VS Code-like midnight
+   Remaps zinc variables to Tailwind's slate palette.
+   ═══════════════════════════════════════════════════════════════ */
+
+[data-theme="slate-dark"] {
+  --color-zinc-50: oklch(98.4% 0.003 247.858);
+  --color-zinc-100: oklch(96.8% 0.007 247.896);
+  --color-zinc-200: oklch(92.9% 0.013 255.508);
+  --color-zinc-300: oklch(86.9% 0.022 252.894);
+  --color-zinc-400: oklch(70.4% 0.04 256.788);
+  --color-zinc-500: oklch(55.4% 0.046 257.417);
+  --color-zinc-600: oklch(44.6% 0.043 257.281);
+  --color-zinc-700: oklch(37.2% 0.044 257.287);
+  --color-zinc-800: oklch(27.9% 0.041 260.031);
+  --color-zinc-900: oklch(20.8% 0.042 265.755);
+  --color-zinc-950: oklch(12.9% 0.042 264.695);
+  --scrollbar-thumb: #334155;
+  --chart-tick: #64748b;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Theme: Neutral Dark — pure achromatic, OLED-friendly
+   Zero chroma (no color cast) — true black-to-white grays.
+   ═══════════════════════════════════════════════════════════════ */
+
+[data-theme="neutral-dark"] {
+  --color-zinc-50: oklch(98.5% 0 0);
+  --color-zinc-100: oklch(97% 0 0);
+  --color-zinc-200: oklch(92.2% 0 0);
+  --color-zinc-300: oklch(87% 0 0);
+  --color-zinc-400: oklch(70.8% 0 0);
+  --color-zinc-500: oklch(55.6% 0 0);
+  --color-zinc-600: oklch(43.9% 0 0);
+  --color-zinc-700: oklch(30% 0 0);
+  --color-zinc-800: oklch(18% 0 0);
+  --color-zinc-900: oklch(9% 0 0);
+  --color-zinc-950: oklch(0% 0 0);
+  --scrollbar-thumb: #2a2a2a;
+  --chart-tick: #737373;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Theme: Oxocarbon — IBM Carbon-inspired, achromatic dark grays
+   Based on nyoom-engineering/oxocarbon (base16 palette).
+   Neutral grays with very slight blue tint in lightest shades.
+   ═══════════════════════════════════════════════════════════════ */
+
+[data-theme="oxocarbon"] {
+  --color-zinc-50: oklch(96.7% 0.006 264);
+  --color-zinc-100: oklch(90.8% 0.008 254);
+  --color-zinc-200: oklch(82.7% 0 0);
+  --color-zinc-300: oklch(73.2% 0 0);
+  --color-zinc-400: oklch(64.3% 0 0);
+  --color-zinc-500: oklch(54.2% 0 0);
+  --color-zinc-600: oklch(43.9% 0 0);
+  --color-zinc-700: oklch(34.5% 0 0);
+  --color-zinc-800: oklch(26.9% 0 0);
+  --color-zinc-900: oklch(20% 0 0);
+  --color-zinc-950: oklch(14.5% 0 0);
+  --scrollbar-thumb: #393939;
+  --chart-tick: #6f6f6f;
+  --color-blue-500: oklch(68% 0.12 256);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Theme: Gruvbox Dark Hard — retro warm palette with earthy tones
+   Based on morhetz/gruvbox "hard" contrast variant.
+   Warm chroma throughout the gray scale (golden-brown hue).
+   ═══════════════════════════════════════════════════════════════ */
+
+[data-theme="gruvbox"] {
+  --color-zinc-50: oklch(95.6% 0.055 96);
+  --color-zinc-100: oklch(89.4% 0.057 89);
+  --color-zinc-200: oklch(82.5% 0.051 85);
+  --color-zinc-300: oklch(75.6% 0.041 82);
+  --color-zinc-400: oklch(61.9% 0.029 67);
+  --color-zinc-500: oklch(48.2% 0.018 61);
+  --color-zinc-600: oklch(41.1% 0.012 52);
+  --color-zinc-700: oklch(34.4% 0.007 49);
+  --color-zinc-800: oklch(27.7% 0.005 49);
+  --color-zinc-900: oklch(24.1% 0.005 220);
+  --color-zinc-950: oklch(20.5% 0.005 49);
+  --scrollbar-thumb: #504945;
+  --chart-tick: #928374;
+  --color-blue-500: oklch(69% 0.042 170);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Theme: Dim — softer contrast for daytime use
+   Shifts the zinc scale ~15% brighter, reducing eye strain.
+   ═══════════════════════════════════════════════════════════════ */
+
+[data-theme="dim"] {
+  --color-zinc-50: oklch(99% 0 0);
+  --color-zinc-100: oklch(97% 0.001 286);
+  --color-zinc-200: oklch(93% 0.003 286);
+  --color-zinc-300: oklch(88% 0.005 286);
+  --color-zinc-400: oklch(72% 0.012 286);
+  --color-zinc-500: oklch(58% 0.014 286);
+  --color-zinc-600: oklch(50% 0.014 286);
+  --color-zinc-700: oklch(44% 0.011 286);
+  --color-zinc-800: oklch(37% 0.008 286);
+  --color-zinc-900: oklch(31% 0.006 286);
+  --color-zinc-950: oklch(25% 0.005 286);
+  --scrollbar-thumb: #52525b;
+  --chart-tick: #71717a;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Theme: Light — full inversion, white backgrounds
+   The zinc scale is flipped: dark variables become light & vice versa.
+   Accent colors are bumped one shade darker for contrast.
+   ═══════════════════════════════════════════════════════════════ */
+
+[data-theme="light"] {
+  /* Inverted zinc scale */
+  --color-zinc-950: oklch(99% 0.002 286);
+  --color-zinc-900: oklch(97% 0.003 286);
+  --color-zinc-800: oklch(92% 0.006 286);
+  --color-zinc-700: oklch(87% 0.008 286);
+  --color-zinc-600: oklch(55% 0.016 286);
+  --color-zinc-500: oklch(45% 0.014 286);
+  --color-zinc-400: oklch(40% 0.012 286);
+  --color-zinc-300: oklch(35% 0.010 286);
+  --color-zinc-200: oklch(28% 0.008 286);
+  --color-zinc-100: oklch(21% 0.006 286);
+  --color-zinc-50: oklch(15% 0.005 286);
+
+  /* Stronger accents for light backgrounds */
+  --color-emerald-400: oklch(69.6% 0.17 162.48);
+  --color-red-400: oklch(63.7% 0.237 25.331);
+  --color-blue-400: oklch(54.6% 0.245 262.881);
+
+  --scrollbar-thumb: #d4d4d8;
+  --chart-stroke: #2563eb;
+  --chart-fill: rgba(37, 99, 235, 0.06);
+  --chart-tick: #71717a;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Theme: Warm Light — stone palette, paper-like warmth
+   Same inversion as Light, but with warm hue angles.
+   ═══════════════════════════════════════════════════════════════ */
+
+[data-theme="warm-light"] {
+  /* Inverted warm scale — distinctly cream/paper-like.
+     Chroma ~2× higher than light theme; hues shifted to golden-amber (35–80). */
+  --color-zinc-950: oklch(97.5% 0.016 80);
+  --color-zinc-900: oklch(95.5% 0.020 76);
+  --color-zinc-800: oklch(90.5% 0.025 70);
+  --color-zinc-700: oklch(85% 0.028 65);
+  --color-zinc-600: oklch(55% 0.025 55);
+  --color-zinc-500: oklch(44% 0.020 50);
+  --color-zinc-400: oklch(39% 0.018 48);
+  --color-zinc-300: oklch(34% 0.015 45);
+  --color-zinc-200: oklch(27% 0.012 40);
+  --color-zinc-100: oklch(22% 0.010 38);
+  --color-zinc-50: oklch(15% 0.008 35);
+
+  /* Stronger accents for light backgrounds */
+  --color-emerald-400: oklch(69.6% 0.17 162.48);
+  --color-red-400: oklch(63.7% 0.237 25.331);
+  --color-blue-400: oklch(54.6% 0.245 262.881);
+
+  --scrollbar-thumb: #c4baa8;
+  --chart-stroke: #2563eb;
+  --chart-fill: rgba(37, 99, 235, 0.06);
+  --chart-tick: #887a68;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

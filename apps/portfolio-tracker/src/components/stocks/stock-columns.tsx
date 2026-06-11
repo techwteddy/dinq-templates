@@ -1,0 +1,756 @@
+import { Pencil, Trash2, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { convertToBase } from "@/lib/prices/fx";
+import type { FXRates } from "@/lib/prices/fx";
+import type { ColumnDef, SortDirection } from "@/lib/column-config";
+export type { SortDirection } from "@/lib/column-config";
+import { formatCurrency, formatQuantity } from "@/lib/format";
+import { navStaleness } from "@/lib/manual-nav";
+import { STALE_NAV_DAYS_THRESHOLD } from "@/lib/constants";
+import type {
+  StockAssetWithPositions,
+  AssetCategory,
+  YahooStockPriceData,
+  YahooDividendMap,
+} from "@/lib/types";
+
+/** Map of manual asset id → latest NAV effective_date, for staleness display. */
+export type LatestNavDateByAssetId = Map<string, string>;
+
+// ── Computed row type (asset + price data) ───────────────────
+
+export interface StockRow {
+  id: string;
+  asset: StockAssetWithPositions;
+  pricePerShare: number;
+  change24h: number;
+  totalQty: number;
+  valueNative: number;
+  valueBase: number;
+  dividendYield: number;   // trailing 12-month yield % (0 if none)
+  annualDividend: number;  // annual dividend per share (native currency)
+  dividendCount: number;   // payments/year (4 = quarterly, 2 = semi-annual)
+  /** True when Yahoo returned no price data (delisted, OTC, etc.) */
+  priceUnavailable: boolean;
+}
+
+// ── Type display maps ────────────────────────────────────────
+
+export const TYPE_LABELS: Record<AssetCategory, string> = {
+  individual_stock: "Stock",
+  etf: "ETF",
+  bond_fixed_income: "Bond",
+  private_equity: "Private Equity",
+  other: "Other",
+};
+
+export const TYPE_COLORS: Record<AssetCategory, string> = {
+  individual_stock: "text-blue-400",
+  etf: "text-purple-400",
+  bond_fixed_income: "text-amber-400",
+  private_equity: "text-violet-400",
+  other: "text-zinc-400",
+};
+
+// ── Rotating palette for dynamic groups (brokers) ───────────
+
+// ── Build rows from assets + prices ──────────────────────────
+
+export function buildStockRows(
+  assets: StockAssetWithPositions[],
+  prices: YahooStockPriceData,
+  primaryCurrency: string,
+  fxRates: FXRates,
+  dividends?: YahooDividendMap
+): StockRow[] {
+  const rows = assets.map((asset) => {
+    const key = asset.yahoo_ticker || asset.ticker;
+    const priceData = prices[key] ?? null;
+    const pricePerShare = priceData?.price ?? 0;
+    const change24h = priceData?.change24h ?? 0;
+    const priceUnavailable = priceData === null;
+    const totalQty = asset.positions.reduce((sum, p) => sum + p.quantity, 0);
+    const valueNative = totalQty * pricePerShare;
+    const valueBase = convertToBase(valueNative, asset.currency, primaryCurrency, fxRates);
+
+    const divData = dividends?.[key] ?? null;
+    const dividendYield = divData?.trailingYield ?? 0;
+    const annualDividend = divData?.annualDividend ?? 0;
+    const dividendCount = divData?.dividendCount ?? 0;
+
+    return {
+      id: asset.id, asset, pricePerShare, change24h, totalQty,
+      valueNative, valueBase, dividendYield, annualDividend, dividendCount,
+      priceUnavailable,
+    };
+  });
+
+  // Sort by converted value descending
+  rows.sort((a, b) => b.valueBase - a.valueBase);
+  return rows;
+}
+
+// ── Group type for group-by-category mode ────────────────────
+
+export interface StockGroup {
+  category: AssetCategory;
+  label: string;
+  color: string;
+  rows: StockRow[];
+  totalValue: number;
+  assetCount: number;
+}
+
+export function buildStockGroupRows(rows: StockRow[]): StockGroup[] {
+  const groupMap = new Map<AssetCategory, StockRow[]>();
+
+  for (const row of rows) {
+    const cat = row.asset.category;
+    const existing = groupMap.get(cat) ?? [];
+    existing.push(row);
+    groupMap.set(cat, existing);
+  }
+
+  const groups: StockGroup[] = [];
+  for (const [cat, groupRows] of groupMap) {
+    const totalValue = groupRows.reduce((sum, r) => sum + r.valueBase, 0);
+    groups.push({
+      category: cat,
+      label: TYPE_LABELS[cat],
+      color: TYPE_COLORS[cat],
+      rows: groupRows.sort((a, b) => b.valueBase - a.valueBase),
+      totalValue,
+      assetCount: groupRows.length,
+    });
+  }
+
+  // Sort groups by total value descending
+  groups.sort((a, b) => b.totalValue - a.totalValue);
+  return groups;
+}
+
+// ── Position-level group for group-by-broker mode ────────────
+
+/** One asset's positions at a specific broker within a group */
+export interface StockBrokerEntry {
+  row: StockRow;
+  positions: StockAssetWithPositions["positions"];
+  groupQty: number;
+  groupValue: number;
+}
+
+/** A group of entries for one broker */
+export interface StockBrokerGroup {
+  brokerName: string;
+  entries: StockBrokerEntry[];
+  totalValue: number;
+  entryCount: number;
+}
+
+/**
+ * Build position-level groups by broker: each asset's positions are split by broker_name,
+ * so an asset with positions at two brokers appears in both broker groups.
+ */
+export function buildStockBrokerGroups(rows: StockRow[]): StockBrokerGroup[] {
+  const groupMap = new Map<string, StockBrokerEntry[]>();
+
+  for (const row of rows) {
+    // Split this asset's positions by broker
+    const byBroker = new Map<string, StockAssetWithPositions["positions"]>();
+    for (const pos of row.asset.positions) {
+      const broker = pos.broker_name ?? "Unknown";
+      const arr = byBroker.get(broker) ?? [];
+      arr.push(pos);
+      byBroker.set(broker, arr);
+    }
+
+    // Create one entry per (asset, broker) pair
+    for (const [broker, positions] of byBroker) {
+      const groupQty = positions.reduce((sum, p) => sum + p.quantity, 0);
+      // Value proportional to the asset's total base value
+      const groupValue = row.totalQty > 0
+        ? row.valueBase * (groupQty / row.totalQty)
+        : 0;
+
+      const entry: StockBrokerEntry = { row, positions, groupQty, groupValue };
+      const existing = groupMap.get(broker) ?? [];
+      existing.push(entry);
+      groupMap.set(broker, existing);
+    }
+  }
+
+  const groups: StockBrokerGroup[] = [];
+  for (const [brokerName, entries] of groupMap) {
+    const totalValue = entries.reduce((sum, e) => sum + e.groupValue, 0);
+    groups.push({
+      brokerName,
+      entries: entries.sort((a, b) => b.groupValue - a.groupValue),
+      totalValue,
+      entryCount: entries.length,
+    });
+  }
+
+  groups.sort((a, b) => b.totalValue - a.totalValue);
+  return groups;
+}
+
+// ── Ticker group for multi-exchange listings ─────────────────
+
+/** Group of assets sharing the same display ticker (e.g. VWCE.DE + VWCE.AS) */
+export interface TickerGroup {
+  ticker: string;
+  name: string;
+  category: AssetCategory;
+  rows: StockRow[];
+  totalValueBase: number;
+  weightedChange24h: number;
+  weightedYield: number;
+}
+
+/**
+ * Groups stock rows by display ticker. Tickers with 2+ assets become
+ * TickerGroups; single-variant tickers remain as plain StockRows.
+ */
+export function buildTickerGroups(
+  rows: StockRow[]
+): { groups: TickerGroup[]; singles: StockRow[] } {
+  const tickerMap = new Map<string, StockRow[]>();
+
+  for (const row of rows) {
+    const t = row.asset.ticker;
+    const arr = tickerMap.get(t) ?? [];
+    arr.push(row);
+    tickerMap.set(t, arr);
+  }
+
+  const groups: TickerGroup[] = [];
+  const singles: StockRow[] = [];
+
+  for (const [ticker, tickerRows] of tickerMap) {
+    if (tickerRows.length < 2) {
+      singles.push(tickerRows[0]);
+      continue;
+    }
+
+    // Sort variants by value descending
+    tickerRows.sort((a, b) => b.valueBase - a.valueBase);
+
+    const totalValueBase = tickerRows.reduce((sum, r) => sum + r.valueBase, 0);
+    const weightedChange24h =
+      totalValueBase > 0
+        ? tickerRows.reduce((sum, r) => sum + r.valueBase * r.change24h, 0) /
+          totalValueBase
+        : 0;
+    const weightedYield =
+      totalValueBase > 0
+        ? tickerRows.reduce((sum, r) => sum + r.valueBase * r.dividendYield, 0) /
+          totalValueBase
+        : 0;
+
+    // Use largest variant as representative
+    const primary = tickerRows[0];
+
+    groups.push({
+      ticker,
+      name: primary.asset.name,
+      category: primary.asset.category,
+      rows: tickerRows,
+      totalValueBase,
+      weightedChange24h,
+      weightedYield,
+    });
+  }
+
+  // Sort groups by total value descending
+  groups.sort((a, b) => b.totalValueBase - a.totalValueBase);
+  return { groups, singles };
+}
+
+// ── Sorting ───────────────────────────────────────────────────
+
+export type SortKey = "value" | "name" | "type" | "change" | "yield" | "currency";
+
+export const DEFAULT_SORT_KEY: SortKey = "value";
+export const DEFAULT_SORT_DIR: SortDirection = "desc";
+
+export const SORT_OPTIONS: { key: SortKey; label: string; defaultDir: SortDirection }[] = [
+  { key: "value", label: "Value", defaultDir: "desc" },
+  { key: "name", label: "Name", defaultDir: "asc" },
+  { key: "type", label: "Type", defaultDir: "asc" },
+  { key: "change", label: "24h %", defaultDir: "desc" },
+  { key: "yield", label: "Yield", defaultDir: "desc" },
+  { key: "currency", label: "Currency", defaultDir: "asc" },
+];
+
+/** Maps column keys to sort keys (for clickable desktop headers) */
+export const COLUMN_TO_SORT: Record<string, SortKey | undefined> = {
+  asset: "name",
+  type: "type",
+  currency: "currency",
+  price: "change",
+  yield: "yield",
+  value: "value",
+};
+
+/** Union type for flat-mode items (single row or ticker group) */
+export type FlatItem =
+  | { kind: "single"; row: StockRow; value: number }
+  | { kind: "ticker-group"; group: TickerGroup; value: number };
+
+/** Extract a comparable sort value from a FlatItem */
+function flatItemSortVal(item: FlatItem, key: SortKey): string | number {
+  if (item.kind === "single") {
+    const { row } = item;
+    switch (key) {
+      case "value": return row.valueBase;
+      case "name": return row.asset.name.toLowerCase();
+      case "type": return TYPE_LABELS[row.asset.category];
+      case "change": return row.change24h;
+      case "yield": return row.dividendYield;
+      case "currency": return row.asset.currency;
+    }
+  } else {
+    const { group } = item;
+    switch (key) {
+      case "value": return group.totalValueBase;
+      case "name": return group.name.toLowerCase();
+      case "type": return TYPE_LABELS[group.category];
+      case "change": return group.weightedChange24h;
+      case "yield": return group.weightedYield;
+      case "currency": return group.rows[0]?.asset.currency ?? "";
+    }
+  }
+}
+
+/** Sort flat-mode items by the given key and direction */
+export function sortFlatItems(
+  items: FlatItem[],
+  key: SortKey,
+  dir: SortDirection
+): FlatItem[] {
+  return [...items].sort((a, b) => {
+    const av = flatItemSortVal(a, key);
+    const bv = flatItemSortVal(b, key);
+    if (av < bv) return dir === "asc" ? -1 : 1;
+    if (av > bv) return dir === "asc" ? 1 : -1;
+    return 0;
+  });
+}
+
+/** Sort StockRows by key (used within groups) */
+export function sortRows(
+  rows: StockRow[],
+  key: SortKey,
+  dir: SortDirection
+): StockRow[] {
+  return [...rows].sort((a, b) => {
+    let av: string | number, bv: string | number;
+    switch (key) {
+      case "value": av = a.valueBase; bv = b.valueBase; break;
+      case "name": av = a.asset.name.toLowerCase(); bv = b.asset.name.toLowerCase(); break;
+      case "type": av = TYPE_LABELS[a.asset.category]; bv = TYPE_LABELS[b.asset.category]; break;
+      case "change": av = a.change24h; bv = b.change24h; break;
+      case "yield": av = a.dividendYield; bv = b.dividendYield; break;
+      case "currency": av = a.asset.currency; bv = b.asset.currency; break;
+    }
+    if (av < bv) return dir === "asc" ? -1 : 1;
+    if (av > bv) return dir === "asc" ? 1 : -1;
+    return 0;
+  });
+}
+
+// ── Currency group for group-by-currency mode ─────────────────
+
+/** Currency color map — covers common currencies, falls back to zinc */
+export const CURRENCY_COLORS: Record<string, string> = {
+  EUR: "text-blue-400",
+  USD: "text-emerald-400",
+  GBP: "text-amber-400",
+  CHF: "text-red-400",
+  JPY: "text-rose-400",
+  CAD: "text-orange-400",
+  AUD: "text-teal-400",
+  SEK: "text-sky-400",
+  NOK: "text-indigo-400",
+  DKK: "text-violet-400",
+};
+
+export function getCurrencyColor(currency: string): string {
+  return CURRENCY_COLORS[currency] ?? "text-zinc-400";
+}
+
+export interface StockCurrencyGroup {
+  currency: string;
+  rows: StockRow[];
+  totalValue: number;
+  assetCount: number;
+}
+
+/**
+ * Groups stock rows by their native currency. Each listing is treated
+ * individually (no ticker grouping), so VWCE.DE (EUR) and VWCE (USD)
+ * end up in separate currency groups.
+ */
+export function buildStockCurrencyGroups(rows: StockRow[]): StockCurrencyGroup[] {
+  const groupMap = new Map<string, StockRow[]>();
+
+  for (const row of rows) {
+    const cur = row.asset.currency;
+    const existing = groupMap.get(cur) ?? [];
+    existing.push(row);
+    groupMap.set(cur, existing);
+  }
+
+  const groups: StockCurrencyGroup[] = [];
+  for (const [currency, groupRows] of groupMap) {
+    const totalValue = groupRows.reduce((sum, r) => sum + r.valueBase, 0);
+    groups.push({
+      currency,
+      rows: groupRows.sort((a, b) => b.valueBase - a.valueBase),
+      totalValue,
+      assetCount: groupRows.length,
+    });
+  }
+
+  groups.sort((a, b) => b.totalValue - a.totalValue);
+  return groups;
+}
+
+// ── Subcategory group for group-by-subcategory mode ────────
+
+export interface StockSubcategoryGroup {
+  subcategory: string;       // display label ("S&P 500", "World", or "Uncategorized")
+  isUncategorized: boolean;  // true for the fallback bucket
+  rows: StockRow[];
+  totalValue: number;
+  assetCount: number;
+}
+
+/**
+ * Groups stock rows by their user-defined subcategory.
+ * Assets without a subcategory fall into an "Uncategorized" group.
+ */
+export function buildStockSubcategoryGroups(rows: StockRow[]): StockSubcategoryGroup[] {
+  const UNCATEGORIZED = "Uncategorized";
+  const groupMap = new Map<string, StockRow[]>();
+
+  for (const row of rows) {
+    const key = row.asset.subcategory?.trim() || UNCATEGORIZED;
+    const existing = groupMap.get(key) ?? [];
+    existing.push(row);
+    groupMap.set(key, existing);
+  }
+
+  const groups: StockSubcategoryGroup[] = [];
+  for (const [subcategory, groupRows] of groupMap) {
+    const totalValue = groupRows.reduce((sum, r) => sum + r.valueBase, 0);
+    groups.push({
+      subcategory,
+      isUncategorized: subcategory === UNCATEGORIZED,
+      rows: groupRows.sort((a, b) => b.valueBase - a.valueBase),
+      totalValue,
+      assetCount: groupRows.length,
+    });
+  }
+
+  // Sort groups by total value descending, but push "Uncategorized" to the end
+  groups.sort((a, b) => {
+    if (a.isUncategorized && !b.isUncategorized) return 1;
+    if (!a.isUncategorized && b.isUncategorized) return -1;
+    return b.totalValue - a.totalValue;
+  });
+  return groups;
+}
+
+// ── Column definitions ───────────────────────────────────────
+
+export function getStockColumns(handlers: {
+  onEdit: (asset: StockAssetWithPositions) => void;
+  onDelete: (id: string, name: string) => void;
+  onEditNav?: (asset: StockAssetWithPositions) => void;
+  isExpanded: (id: string) => boolean;
+  toggleExpand: (id: string) => void;
+  latestNavDates?: LatestNavDateByAssetId;
+}): ColumnDef<StockRow>[] {
+  return [
+    {
+      key: "asset",
+      label: "Asset",
+      header: "Asset",
+      pinned: "left",
+      align: "left",
+      renderCell: (row) => (
+        <button
+          onClick={() => handlers.toggleExpand(row.asset.id)}
+          aria-expanded={handlers.isExpanded(row.asset.id)}
+          aria-label={`${handlers.isExpanded(row.asset.id) ? "Collapse" : "Expand"} ${row.asset.name}`}
+          className="flex items-center gap-2 text-left min-w-0"
+        >
+          {handlers.isExpanded(row.asset.id) ? (
+            <ChevronDown aria-hidden="true" className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+          ) : (
+            <ChevronRight aria-hidden="true" className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+          )}
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-zinc-200 truncate block">
+              {row.asset.name}
+            </span>
+            <span className="text-xs text-zinc-400 uppercase">
+              {row.asset.ticker}
+              {row.asset.isin && (
+                <span className="text-zinc-400 ml-1.5 normal-case">
+                  {row.asset.isin}
+                </span>
+              )}
+            </span>
+          </div>
+        </button>
+      ),
+    },
+    {
+      key: "currency",
+      label: "Currency",
+      header: "Currency",
+      align: "center",
+      width: "w-20",
+      hiddenBelow: "md",
+      renderCell: (row) => (
+        <span className="text-xs text-zinc-400">
+          {row.asset.currency}
+        </span>
+      ),
+    },
+    {
+      key: "type",
+      label: "Type",
+      header: "Type",
+      align: "left",
+      width: "w-28",
+      hiddenBelow: "xl",
+      renderCell: (row) => (
+        <div>
+          <span className={`text-xs font-medium ${TYPE_COLORS[row.asset.category]}`}>
+            {TYPE_LABELS[row.asset.category]}
+          </span>
+          {row.asset.subcategory && (
+            <span className="block text-[11px] text-zinc-400 leading-tight truncate">
+              {row.asset.subcategory}
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "tags",
+      label: "Tags",
+      header: "Tags",
+      align: "left",
+      width: "w-32",
+      hiddenBelow: "xl",
+      renderCell: (row) => {
+        const tags = row.asset.tags;
+        if (!tags || tags.length === 0) {
+          return <span className="text-xs text-zinc-400">—</span>;
+        }
+        const visible = tags.slice(0, 2);
+        const remaining = tags.length - 2;
+        return (
+          <div className="flex flex-col gap-0.5">
+            {visible.map((tag) => (
+              <span
+                key={tag}
+                className="text-[11px] text-zinc-400 leading-tight truncate"
+              >
+                {tag}
+              </span>
+            ))}
+            {remaining > 0 && (
+              <span className="text-[10px] text-zinc-400">
+                +{remaining} more
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: "yield",
+      label: "Yield",
+      header: "Yield",
+      align: "right",
+      width: "w-24",
+      hiddenBelow: "xl",
+      renderCell: (row) =>
+        row.dividendYield > 0 ? (
+          <div>
+            <span className="text-xs tabular-nums text-emerald-400">
+              ~{row.dividendYield.toFixed(2)}%
+            </span>
+            {row.dividendCount > 0 && (
+              <span className="block text-[11px] tabular-nums text-zinc-400">
+                {row.dividendCount}x/yr
+              </span>
+            )}
+          </div>
+        ) : (
+          <span className="text-xs text-zinc-400">—</span>
+        ),
+    },
+    {
+      key: "price",
+      label: "Price",
+      header: "Price",
+      align: "right",
+      width: "w-36",
+      renderCell: (row) => {
+        // Manual NAV asset: show pen icon + staleness, no 24h change
+        if (row.asset.kind === "manual") {
+          const lastDate = handlers.latestNavDates?.get(row.asset.id) ?? null;
+          const stale = lastDate ? navStaleness(lastDate) : null;
+          const isStale = stale && stale.daysAgo > STALE_NAV_DAYS_THRESHOLD;
+          return row.pricePerShare > 0 ? (
+            <div>
+              <div className="flex items-center justify-end gap-1.5">
+                <span className="text-sm tabular-nums text-zinc-300">
+                  {formatCurrency(row.pricePerShare, row.asset.currency)}
+                </span>
+                {handlers.onEditNav && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handlers.onEditNav!(row.asset);
+                    }}
+                    className="p-1.5 -m-1 inline-flex items-center justify-center min-w-6 min-h-6 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700/50 rounded transition-colors"
+                    aria-label={`Update NAV for ${row.asset.ticker}`}
+                    title="Update NAV"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              {stale && (
+                <span
+                  className={`inline-flex text-[10px] tabular-nums items-center gap-1 ${
+                    isStale ? "text-amber-400" : "text-zinc-400"
+                  }`}
+                  title={isStale ? `NAV is older than ${STALE_NAV_DAYS_THRESHOLD} days — consider updating` : undefined}
+                >
+                  {/* Icon prefix on stale state — multi-channel signal (not color alone) per WCAG 1.4.1. */}
+                  {isStale && <AlertTriangle className="w-2.5 h-2.5" aria-hidden="true" />}
+                  {isStale ? "Stale — " : "Updated "}{stale.label}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-end gap-1.5">
+              <span
+                className="inline-flex items-center gap-1 text-xs text-amber-400"
+                title="No NAV recorded yet — click the pencil to add one"
+              >
+                <AlertTriangle className="w-3 h-3" />
+                No NAV
+              </span>
+              {handlers.onEditNav && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handlers.onEditNav!(row.asset);
+                  }}
+                  className="p-1.5 -m-1 inline-flex items-center justify-center min-w-6 min-h-6 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700/50 rounded transition-colors"
+                  aria-label={`Add NAV for ${row.asset.ticker}`}
+                  title="Add first NAV"
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          );
+        }
+        // Yahoo asset: existing behavior
+        return row.pricePerShare > 0 ? (
+          <div>
+            <span className="text-sm tabular-nums text-zinc-300">
+              {formatCurrency(row.pricePerShare, row.asset.currency)}
+            </span>
+            <span
+              className={`block text-xs tabular-nums ${
+                row.change24h >= 0 ? "text-emerald-400" : "text-red-400"
+              }`}
+            >
+              {row.change24h >= 0 ? "+" : ""}
+              {row.change24h.toFixed(2)}%
+            </span>
+          </div>
+        ) : (
+          <span
+            className="inline-flex items-center gap-1 text-xs text-amber-400"
+            title="Price unavailable — ticker may be delisted or not supported by Yahoo Finance"
+          >
+            <AlertTriangle className="w-3 h-3" />
+            Unavailable
+          </span>
+        );
+      },
+    },
+    {
+      key: "shares",
+      label: "Shares",
+      header: "Shares",
+      align: "right",
+      width: "w-24",
+      hiddenBelow: "xl",
+      renderCell: (row) => (
+        <span className="text-xs text-zinc-400 tabular-nums">
+          {row.totalQty > 0 ? formatQuantity(row.totalQty, 4) : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "value",
+      label: "Value",
+      header: "Value",
+      align: "right",
+      width: "w-28",
+      renderHeader: (ctx) =>
+        `Value (${ctx.primaryCurrency})`,
+      renderCell: (row, ctx) => (
+        <span className={`text-sm tabular-nums ${row.priceUnavailable ? "text-zinc-400" : "font-semibold text-zinc-100"}`}>
+          {row.priceUnavailable
+            ? "—"
+            : row.valueBase > 0
+              ? formatCurrency(row.valueBase, ctx.primaryCurrency)
+              : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "actions",
+      label: "Actions",
+      header: "",
+      pinned: "right",
+      align: "right",
+      width: "w-20",
+      renderCell: (row) => (
+        <div className="flex items-center justify-end gap-1">
+          <button
+            onClick={() => handlers.onEdit(row.asset)}
+            aria-label={`Edit positions for ${row.asset.name}`}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-blue-400 hover:bg-zinc-800 transition-colors"
+            title="Edit positions"
+          >
+            <Pencil aria-hidden="true" className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => handlers.onDelete(row.asset.id, row.asset.name)}
+            aria-label={`Remove ${row.asset.name}`}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-red-400 hover:bg-zinc-800 transition-colors"
+            title="Remove asset"
+          >
+            <Trash2 aria-hidden="true" className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ),
+    },
+  ];
+}

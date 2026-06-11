@@ -1,0 +1,101 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { BarChart2 } from "lucide-react";
+import { SCOPE_RANK, type ShareScope } from "@/lib/share-utils";
+
+interface SharedNavBarProps {
+  token: string;
+  scope: ShareScope;
+  ownerName: string;
+  isAuthenticated?: boolean;
+  onCompareClick?: () => void;
+}
+
+const allTabs = [
+  { id: "overview", label: "Overview", href: "", minScope: "overview" as const },
+  { id: "accounts", label: "Accounts", href: "/accounts", minScope: "full" as const },
+  { id: "crypto", label: "Crypto", href: "/crypto", minScope: "full" as const },
+  { id: "stocks", label: "Equities", href: "/stocks", minScope: "full" as const },
+  { id: "cash", label: "Cash", href: "/cash", minScope: "full" as const },
+  { id: "history", label: "History", href: "/history", minScope: "full_with_history" as const },
+  { id: "diary", label: "Diary", href: "/diary", minScope: "full_with_history" as const },
+];
+
+export function SharedNavBar({ token, scope, ownerName, isAuthenticated, onCompareClick }: SharedNavBarProps) {
+  const pathname = usePathname();
+  const basePath = `/share/${token}`;
+
+  const visibleTabs = allTabs.filter(
+    (tab) => SCOPE_RANK[scope] >= SCOPE_RANK[tab.minScope]
+  );
+
+  return (
+    <div className="border-b border-zinc-800/50 bg-zinc-950/80 backdrop-blur-sm sticky top-0 z-40">
+      {/* Read-only banner with context-aware CTA */}
+      <div className="bg-blue-500/10 border-b border-blue-500/20 px-4 py-2">
+        <p className="text-xs text-blue-400 text-center flex items-center justify-center gap-2 flex-wrap">
+          <span>
+            Viewing <span className="font-medium">{ownerName}&apos;s</span> portfolio
+            <span className="text-blue-500/70"> &middot; Read-only</span>
+          </span>
+          {isAuthenticated ? (
+            <>
+              {onCompareClick && (
+                <button
+                  onClick={onCompareClick}
+                  className="inline-flex items-center gap-1 bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors"
+                >
+                  <BarChart2 className="w-3 h-3" />
+                  Compare
+                </button>
+              )}
+              <Link
+                href="/dashboard"
+                className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200 font-medium transition-colors"
+              >
+                &rarr; My Portfolio
+              </Link>
+            </>
+          ) : (
+            <Link
+              href="/register"
+              className="inline-flex items-center gap-1 text-blue-300 hover:text-blue-200 font-medium transition-colors"
+            >
+              &rarr; Track your own
+            </Link>
+          )}
+        </p>
+      </div>
+
+      {/* Navigation tabs */}
+      <div className="px-4 overflow-x-auto">
+        <nav className="flex gap-1 py-1" aria-label="Shared portfolio navigation">
+          {visibleTabs.map((tab) => {
+            const href = `${basePath}${tab.href}`;
+            const isActive =
+              tab.href === ""
+                ? pathname === basePath
+                : pathname.startsWith(href);
+
+            return (
+              <Link
+                key={tab.id}
+                href={href}
+                aria-current={isActive ? "page" : undefined}
+                className={`px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
+                  isActive
+                    ? "bg-zinc-800 text-zinc-100"
+                    : "text-zinc-400 hover:text-zinc-300"
+                }`}
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+    </div>
+  );
+}

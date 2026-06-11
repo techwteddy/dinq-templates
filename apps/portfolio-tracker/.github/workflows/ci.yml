@@ -1,0 +1,225 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # manual trigger for re-deploys
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        # Explicit tsc --noEmit pass covers the whole tree, including
+        # __tests__/**/*.test-d.ts files that use @ts-expect-error to
+        # assert compile-time type contracts. `next build` does a typecheck
+        # but its scope can change between Next.js versions — this step
+        # locks in the contract that all .test-d.ts assertions are honored.
+        run: npm run typecheck
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy-anon-key-for-build
+          NEXT_PUBLIC_SENTRY_DSN: "https://placeholder@sentry.io/0"
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Component tests
+        run: npm run test:component
+
+      - name: Install Supabase CLI
+        id: supabase-cli
+        run: |
+          curl -fsSL -o /tmp/supabase.deb \
+            https://github.com/supabase/cli/releases/download/v2.78.1/supabase_2.78.1_linux_amd64.deb
+          sudo dpkg -i /tmp/supabase.deb
+
+      - name: Cache Supabase Docker images
+        uses: actions/cache@v5
+        with:
+          path: /tmp/supabase-docker-cache
+          # Include the pinned Supabase CLI version in the cache key so a CLI bump
+          # automatically invalidates any stale cached images from an older version.
+          key: supabase-docker-${{ runner.os }}-v2.78.1
+
+      - name: Load cached Docker images
+        run: |
+          if [ -d /tmp/supabase-docker-cache ]; then
+            for f in /tmp/supabase-docker-cache/*.tar; do
+              docker load -i "$f" 2>/dev/null || true
+            done
+          fi
+
+      - name: Start Supabase
+        run: supabase start -x realtime,storage-api,imgproxy,edge-runtime,logflare,vector,supavisor
+
+      - name: Save Docker images to cache
+        run: |
+          mkdir -p /tmp/supabase-docker-cache
+          for img in $(docker images --format '{{.Repository}}:{{.Tag}}' | grep supabase); do
+            name=$(echo "$img" | tr '/:' '_')
+            docker save "$img" -o "/tmp/supabase-docker-cache/${name}.tar" 2>/dev/null || true
+          done
+
+      - name: Verify Database types are in sync with migrations
+        # Regenerate types from the local migration-derived schema and diff
+        # against the committed src/types/database.ts. Fails the build if a
+        # migration changed the schema but types weren't regenerated.
+        run: |
+          supabase gen types typescript --local 2>/dev/null | sed '/^Connecting to db/d' > /tmp/db-types.ts
+          if ! diff -q src/types/database.ts /tmp/db-types.ts > /dev/null; then
+            echo "::error::Database types are out of sync with migrations."
+            echo "Run: supabase gen types typescript --local 2>/dev/null | sed '/^Connecting to db/d' > src/types/database.ts"
+            echo "Diff:"
+            diff src/types/database.ts /tmp/db-types.ts || true
+            exit 1
+          fi
+          echo "Database types match local migration schema."
+
+      - name: Integration tests
+        run: npx vitest run --project integration
+
+      - name: Stop Supabase
+        if: always() && steps.supabase-cli.outcome == 'success'
+        run: supabase stop
+
+  preview:
+    needs: test
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@^50
+
+      - name: Pull Vercel environment
+        run: vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Deploy preview
+        run: |
+          URL=$(vercel deploy --token "$VERCEL_TOKEN" --yes)
+          echo "Preview URL: $URL"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # full history for reliable change detection
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install Supabase CLI
+        run: |
+          curl -fsSL -o /tmp/supabase.deb \
+            https://github.com/supabase/cli/releases/download/v2.78.1/supabase_2.78.1_linux_amd64.deb
+          sudo dpkg -i /tmp/supabase.deb
+
+      - name: Link Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+
+      - name: Push migrations (if changed)
+        run: |
+          BEFORE="${{ github.event.before }}"
+          # On first push or workflow_dispatch, BEFORE is null SHA — run all deploy steps
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || [ -z "$BEFORE" ]; then
+            echo "First push or manual dispatch — pushing all migrations..."
+            supabase db push
+          elif ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            echo "Previous commit unreachable — pushing all migrations to be safe..."
+            supabase db push
+          elif git diff "$BEFORE".."${{ github.sha }}" --name-only | grep -q '^supabase/migrations/'; then
+            echo "Migrations changed — pushing to production..."
+            supabase db push
+          else
+            echo "No migration changes — skipping."
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@^50
+
+      - name: Pull Vercel environment
+        run: vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Deploy to production
+        run: vercel deploy --prod --token "$VERCEL_TOKEN" --yes
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Deploy Edge Functions (if changed)
+        run: |
+          BEFORE="${{ github.event.before }}"
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || [ -z "$BEFORE" ]; then
+            echo "First push or manual dispatch — deploying edge functions..."
+            supabase functions deploy daily-snapshot --no-verify-jwt --project-ref "$SUPABASE_PROJECT_REF"
+          elif ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            echo "Previous commit unreachable — deploying edge functions to be safe..."
+            supabase functions deploy daily-snapshot --no-verify-jwt --project-ref "$SUPABASE_PROJECT_REF"
+          elif git diff "$BEFORE".."${{ github.sha }}" --name-only | grep -q '^supabase/functions/'; then
+            echo "Edge Functions changed — deploying..."
+            supabase functions deploy daily-snapshot --no-verify-jwt --project-ref "$SUPABASE_PROJECT_REF"
+          else
+            echo "No Edge Function changes — skipping."
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
