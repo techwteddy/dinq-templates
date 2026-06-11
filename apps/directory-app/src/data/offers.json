@@ -1,0 +1,34 @@
+[
+  {
+    "id": "6",
+    "offerName": "Dating App Premium",
+    "payout": "$15 CPA",
+    "vertical": "Dating",
+    "country": "CA",
+    "network": "Mobidea"
+  },
+  {
+    "id": "15",
+    "offerName": "Health Supplement Trial",
+    "payout": "$35 CPA",
+    "vertical": "Nutra",
+    "country": "CA",
+    "network": "MaxBounty"
+  },
+  {
+    "id": "27",
+    "offerName": "Gentlove – Mobile/Desktop [AM] SOI 18+",
+    "payout": "$0.40",
+    "vertical": "Dating – Casual",
+    "country": "AM",
+    "network": "Cpamatica"
+  },
+  {
+    "id": "29",
+    "offerName": "NamoradasFofos – Mobile/Desktop [BR, PT]",
+    "payout": "$0.80",
+    "vertical": "Dating – Mainstream",
+    "country": "BR / PT",
+    "network": "Cpamatica"
+  }
+] 

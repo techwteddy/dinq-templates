@@ -1,0 +1,254 @@
+[
+  {
+    "id": "mobidea",
+    "name": "Mobidea",
+    "category": "Mobile Performance",
+    "website": "https://mobidea.com",
+    "logo": "/logos/mobidea.png",
+    "rating": 4.3,
+    "countries": ["US", "CA", "UK", "DE", "FR"]
+  },
+  {
+    "id": "maxbounty",
+    "name": "MaxBounty",
+    "category": "CPA Network",
+    "website": "https://maxbounty.com",
+    "logo": "/logos/maxbounty.png",
+    "rating": 4.4,
+    "countries": ["US", "CA"]
+  },
+  {
+    "id": "dynu-in-media",
+    "name": "DYNU IN MEDIA",
+    "category": "CPA Network",
+    "website": "https://dynuinmedia.com",
+    "logo": "/logos/dynu-in-media.png",
+    "rating": 4.2,
+    "countries": ["US", "UK"]
+  },
+  {
+    "id": "cpamatica",
+    "name": "Cpamatica",
+    "category": "CPA Network",
+    "website": "https://cpamatica.com",
+    "logo": "/logos/cpamatica.png",
+    "rating": 4.0,
+    "countries": ["AM", "BR", "PT"]
+  },
+  {
+    "id": "doppcall",
+    "name": "DOPPCALL",
+    "category": "Pay Per Call",
+    "website": "https://doppcall.com",
+    "logo": "/logos/doppcall.png",
+    "rating": 4.1,
+    "countries": ["US"]
+  },
+  {
+    "id": "lead-smart",
+    "name": "Lead Smart",
+    "category": "Pay Per Call",
+    "website": "https://leadsmart.com",
+    "logo": "/logos/lead-smart.png",
+    "rating": 4.3,
+    "countries": ["US"]
+  },
+  {
+    "id": "algo-affiliates",
+    "name": "Algo-Affiliates",
+    "category": "Crypto Network",
+    "website": "https://algo-affiliates.com",
+    "logo": "/logos/algo-affiliates.png",
+    "rating": 4.5,
+    "countries": ["UK"]
+  },
+  {
+    "id": "cpagetti",
+    "name": "CPAgetti",
+    "category": "CPA Network",
+    "website": "https://cpagetti.com",
+    "logo": "/logos/cpagetti.png",
+    "rating": 4.0,
+    "countries": ["IN"]
+  },
+  {
+    "id": "crakrevenue",
+    "name": "CrakRevenue",
+    "category": "Adult Network",
+    "website": "https://crakrevenue.com",
+    "logo": "/logos/crakrevenue.png",
+    "rating": 4.2,
+    "countries": ["CO"]
+  },
+  {
+    "id": "paysale",
+    "name": "Paysale",
+    "category": "Adult Network",
+    "website": "https://paysale.com",
+    "logo": "/logos/paysale.png",
+    "rating": 4.1,
+    "countries": ["CA", "PL", "AT", "DE", "CH"]
+  },
+  {
+    "id": "metaads-ai",
+    "name": "MetaAds AI",
+    "category": "CPA Network",
+    "website": "https://metaads.ai",
+    "logo": "/logos/metaads-ai.png",
+    "rating": 4.0,
+    "countries": ["US"]
+  },
+  {
+    "id": "monetise-co-uk",
+    "name": "Monetise.co.uk",
+    "category": "CPA Network",
+    "website": "https://monetise.co.uk",
+    "logo": "/logos/monetise-co-uk.png",
+    "rating": 4.1,
+    "countries": ["US", "CA"]
+  },
+  {
+    "id": "mobipium",
+    "name": "MOBIPIUM",
+    "category": "Mobile Network",
+    "website": "https://mobipium.com",
+    "logo": "/logos/mobipium.png",
+    "rating": 4.2,
+    "countries": ["CL", "KE", "IQ", "NG"]
+  },
+  {
+    "id": "onecrypt",
+    "name": "OneCrypt",
+    "category": "Crypto Network",
+    "website": "https://onecrypt.com",
+    "logo": "/logos/onecrypt.png",
+    "rating": 4.4,
+    "countries": ["UK"]
+  },
+  {
+    "id": "leadbit",
+    "name": "LeadBit",
+    "category": "CPA Network",
+    "website": "https://leadbit.com",
+    "logo": "/logos/leadbit.png",
+    "rating": 4.1,
+    "countries": ["HU", "PT", "ID", "CH"]
+  },
+  {
+    "id": "adult-force",
+    "name": "Adult Force",
+    "category": "Adult Network",
+    "website": "https://adultforce.com",
+    "logo": "/logos/adult-force.png",
+    "rating": 4.0,
+    "countries": ["AU", "NL"]
+  },
+  {
+    "id": "dr-cash",
+    "name": "dr.cash",
+    "category": "Health Network",
+    "website": "https://dr.cash",
+    "logo": "/logos/dr-cash.png",
+    "rating": 4.2,
+    "countries": ["TH"]
+  },
+  {
+    "id": "triad-media",
+    "name": "Triad Media",
+    "category": "Ecommerce Network",
+    "website": "https://triadmedia.com",
+    "logo": "/logos/triad-media.png",
+    "rating": 4.3,
+    "countries": ["US", "PR"]
+  },
+  {
+    "id": "pointclicktrack",
+    "name": "PointClickTrack",
+    "category": "CPA Network",
+    "website": "https://pointclicktrack.com",
+    "logo": "/logos/pointclicktrack.png",
+    "rating": 4.1,
+    "countries": ["US"]
+  },
+  {
+    "id": "smashloud",
+    "name": "SmashLoud",
+    "category": "CPA Network",
+    "website": "https://smashloud.com",
+    "logo": "/logos/smashloud.png",
+    "rating": 4.2,
+    "countries": ["US", "AU"]
+  },
+  {
+    "id": "adpump",
+    "name": "Adpump",
+    "category": "Ecommerce Network",
+    "website": "https://adpump.com",
+    "logo": "/logos/adpump.png",
+    "rating": 4.0,
+    "countries": ["US"]
+  },
+  {
+    "id": "adsempire",
+    "name": "AdsEmpire",
+    "category": "Dating Network",
+    "website": "https://adsempire.com",
+    "logo": "/logos/adsempire.png",
+    "rating": 4.1,
+    "countries": ["CL", "SG"]
+  },
+  {
+    "id": "olavivo",
+    "name": "Olavivo",
+    "category": "Crypto Network",
+    "website": "https://olavivo.com",
+    "logo": "/logos/olavivo.png",
+    "rating": 4.3,
+    "countries": ["49 Countries"]
+  },
+  {
+    "id": "mobiteasy",
+    "name": "MobItEasy",
+    "category": "Mobile Network",
+    "website": "https://mobiteasy.com",
+    "logo": "/logos/mobiteasy.png",
+    "rating": 4.0,
+    "countries": ["ID"]
+  },
+  {
+    "id": "advery",
+    "name": "Advery",
+    "category": "Dating Network",
+    "website": "https://advery.com",
+    "logo": "/logos/advery.png",
+    "rating": 4.1,
+    "countries": ["IT"]
+  },
+  {
+    "id": "traffic-light",
+    "name": "Traffic Light",
+    "category": "Health Network",
+    "website": "https://trafficlight.com",
+    "logo": "/logos/traffic-light.png",
+    "rating": 4.0,
+    "countries": ["DZ"]
+  },
+  {
+    "id": "vcommission",
+    "name": "vCommission",
+    "category": "Ecommerce Network",
+    "website": "https://vcommission.com",
+    "logo": "/logos/vcommission.png",
+    "rating": 4.2,
+    "countries": ["DE", "ES"]
+  },
+  {
+    "id": "smartadv",
+    "name": "SmartAdv",
+    "category": "Ecommerce Network",
+    "website": "https://smartadv.com",
+    "logo": "/logos/smartadv.png",
+    "rating": 4.1,
+    "countries": ["US", "CA"]
+  }
+] 
