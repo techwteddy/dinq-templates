@@ -1,0 +1,155 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-ivory:   #FDFAF5;
+    --color-charcoal:#1C1C1C;
+    --color-gold:    #C9923A;
+    --color-muted:   #7A6E5A;
+    --color-sand:    #E8E0D4;
+    --color-leaf:    #6F8F4A;
+    --color-chili:   #B65C3F;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+  body {
+    @apply bg-ivory text-charcoal font-sans antialiased;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Sticky-nav-aware anchor offset */
+  section[id],
+  [data-anchor] {
+    scroll-margin-top: 5rem;
+  }
+  /* Keyboard focus ring — applies to anything that doesn't override it */
+  :focus-visible {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+}
+
+@layer components {
+  .section-padding {
+    @apply px-6 py-14 md:px-16 md:py-16 lg:px-24 lg:py-20;
+  }
+  .hero-padding {
+    @apply px-6 py-12 md:px-16 md:py-14 lg:px-24 lg:py-16;
+  }
+  .section-eyebrow {
+    @apply text-xs tracking-widest uppercase text-gold;
+  }
+  .section-title {
+    @apply font-serif text-3xl md:text-4xl font-normal tracking-brand text-charcoal uppercase;
+  }
+  .field-label {
+    @apply block text-[10px] tracking-widest uppercase text-muted mb-2;
+  }
+  .gold-rule {
+    @apply block w-12 h-px bg-gold my-5;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 bg-charcoal text-ivory px-6 py-3 text-xs tracking-widest uppercase font-sans hover:bg-gold focus-visible:bg-gold transition-colors duration-200;
+  }
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2 border border-gold text-gold px-6 py-3 text-xs tracking-widest uppercase font-sans hover:bg-gold hover:text-ivory focus-visible:bg-gold focus-visible:text-ivory transition-colors duration-200;
+  }
+  /* A small spinner used by async buttons / loading states */
+  .spinner {
+    @apply inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent;
+  }
+}
+
+/* react-day-picker v9 — brand overrides */
+.rdp-root {
+  --rdp-accent-color: var(--color-gold);
+  --rdp-accent-background-color: color-mix(in srgb, var(--color-gold) 12%, transparent);
+  --rdp-day-height: 2.25rem;
+  --rdp-day-width: 2.25rem;
+  --rdp-day_button-border-radius: 999px;
+  --rdp-disabled-opacity: 0.3;
+  --rdp-font-family: inherit;
+  --rdp-weekday-text-transform: uppercase;
+  --rdp-weekday-font-size: 0.625rem;
+  --rdp-weekday-letter-spacing: 0.2em;
+  color: var(--color-charcoal);
+}
+.rdp-root .rdp-month_caption {
+  font-family: Georgia, Cambria, 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 1.125rem;
+  color: var(--color-charcoal);
+}
+.rdp-root .rdp-weekday {
+  color: var(--color-muted);
+}
+.rdp-root .rdp-day_button {
+  font-size: 0.8125rem;
+}
+.rdp-root .rdp-day_button:hover:not(:disabled):not(.rdp-selected) {
+  background-color: color-mix(in srgb, var(--color-gold) 12%, transparent);
+}
+.rdp-root .rdp-selected .rdp-day_button {
+  background-color: var(--color-gold);
+  color: var(--color-ivory);
+}
+.rdp-root .rdp-today:not(.rdp-selected) .rdp-day_button {
+  color: var(--color-gold);
+  font-weight: 500;
+}
+.rdp-root .rdp-disabled {
+  color: color-mix(in srgb, var(--color-charcoal) 30%, transparent);
+}
+.rdp-root .rdp-chevron {
+  fill: var(--color-muted);
+}
+.rdp-root .rdp-button_previous:hover .rdp-chevron,
+.rdp-root .rdp-button_next:hover .rdp-chevron {
+  fill: var(--color-gold);
+}
+
+@layer utilities {
+  @keyframes jilebi-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .animate-fade-in {
+    animation: jilebi-fade-in 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes jilebi-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  .animate-fade {
+    animation: jilebi-fade 200ms ease-out both;
+  }
+}
