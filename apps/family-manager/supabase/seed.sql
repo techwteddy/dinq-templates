@@ -1,0 +1,2 @@
+-- Seed file for My Family Genius
+-- Add your seed data here
