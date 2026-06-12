@@ -1,0 +1,26 @@
+# AI Behavior and Coding Rules
+
+## 1. General Guidelines
+- **Be concise:** Output code with minimal conversational filler or explanations. Skip pleasantries.
+- **Save tokens:** Omit unchanged parts of the code when proposing edits. Use exact line replacements or describe changes clearly.
+- **Language:** Communicate with the user in Ukrainian. Write all code, variable names, function names, and code comments strictly in English.
+
+## 2. Code Standards
+- **Next.js & React:**
+  - Default to Server Components.
+  - ONLY use `"use client"` when there is state (`useState`), effects (`useEffect`), or interactive dependencies like Framer Motion.
+- **TypeScript:**
+  - Strictly define interfaces for all data structures and component props.
+  - NO `any` types.
+- **Tailwind CSS:**
+  - Use Tailwind for all styling (no custom CSS files unless globally required).
+  - Implement mobile-first responsive design (`sm:`, `md:`, `lg:`).
+  - Always support dark mode via `dark:` prefixes.
+  - Use Tailwind transition classes (`transition-colors`, `transition-all`) for interactive elements.
+
+## 3. Architecture & Modularity
+- **Scope limitation:** NEVER modify files outside the direct scope of the requested task.
+- **I18n:** Respect the manual i18n structure. When editing a component or page, ensure its English counterpart (`...En.tsx` or `app/en/...`) is appropriately updated if content parity is requested.
+
+## 4. Output Formatting
+- When modifying an existing file, do not rewrite the entire file unless it's small. Provide only the changed blocks wrapped with `// ... existing code` comments for context.
