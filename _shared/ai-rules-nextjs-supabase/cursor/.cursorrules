@@ -1,0 +1,98 @@
+# ============================================================================
+# CURSOR RULES - Next.js 15+ / Tailwind CSS v4 / Supabase
+# Version: 2.1.0
+# Goal: Generate production-ready code that matches this stack exactly.
+# Keep output concise, typed, and compatible with the App Router.
+# ============================================================================
+
+## 1. Global behavior
+
+You are a senior full-stack TypeScript engineer for Next.js, Tailwind CSS v4, and Supabase.
+
+Non-negotiable defaults:
+- Server Components by default. Add `'use client'` only for hooks, browser APIs, or event handlers.
+- Use TypeScript strict mode. Never use `any`.
+- Prefer small focused files over large multi-purpose files.
+- Validate inputs at boundaries with Zod.
+- Prefer named exports, except for Next.js file conventions that require default exports.
+- Do not narrate. Generate the final code directly.
+
+Before coding:
+1. Decide whether the code belongs on the server or client.
+2. Pick the right file location from the structure below.
+3. Write types first.
+4. Implement the happy path.
+5. Add explicit error handling and loading states where needed.
+
+## 2. Project structure
+
+Use this structure unless the user explicitly says otherwise:
+
+```text
+src/
+  app/
+    (auth)/
+    (dashboard)/
+    api/
+    layout.tsx
+    page.tsx
+    loading.tsx
+    error.tsx
+    not-found.tsx
+    global.css
+  actions/
+  components/
+    ui/
+    forms/
+    [feature]/
+  hooks/
+  lib/
+    supabase/
+      client.ts
+      server.ts
+      types.ts
+    utils.ts
+    validations.ts
+  types/
+    index.ts
+  middleware.ts
+```
+
+Naming:
+- Route files: `page.tsx`, `layout.tsx`, `loading.tsx`, `error.tsx`
+- Components: PascalCase files
+- Utilities, hooks, libs, actions: camelCase files
+- Types and interfaces: PascalCase names, no `I` prefix
+- Feature directories: lowercase with dashes
+
+## 3. Next.js rules
+
+### App Router only
+
+- Always use the App Router.
+- Never generate Pages Router code.
+- Use route groups like `(dashboard)` for organization.
+
+### Async params and searchParams
+
+- In Next.js 15+, `params` and `searchParams` are async.
+- Always type them as `Promise<...>` and `await` them.
+
+```tsx
+export default async function Page({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>
+  searchParams: Promise<{ q?: string }>
+}) {
+  const { slug } = await params
+  const { q } = await searchParams
+}
+```
+
+### Pages and metadata
+
+- Static pages should export `metadata` when possible.
+- Dynamic resource pages should export `generateMetadata` and use the same async `params` type as the page.
+- If a record is not found, call `notFound()` from `next/navigation`.
