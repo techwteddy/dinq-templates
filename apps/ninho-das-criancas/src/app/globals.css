@@ -1,0 +1,180 @@
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* 문막초 해반체 — 한글·전각 등만 담당 (라틴은 아래 KG로 넘김) */
+@font-face {
+  font-family: "문막초 해반체";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("https://cdn.jsdelivr.net/gh/projectnoonnu/2604-1@1.0/MUNMAK_HAEBANCHE.woff2")
+    format("woff2");
+  unicode-range:
+    U+AC00-D7AF, U+1100-11FF, U+3130-318F, U+A960-A97F, U+D7B0-D7FF,
+    U+3000-303F, U+FF00-FFEF, U+FE30-FE4F, U+3200-321E, U+327E-327F;
+}
+
+/*
+ * KG Midnight Memories — dafont「KGMidnightMemories.ttf」woff2 (public/fonts).
+ * 상업 이용 시 저작권자 라이선스 필요: https://www.dafont.com/kg-midnight-memories.font
+ */
+@font-face {
+  font-family: "KG Midnight Memories";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/kg-midnight-memories.woff2") format("woff2");
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  /* typography prose-lg 본문: 18px → 22px (+4px) */
+  .prose.prose-lg {
+    font-size: 1.375rem;
+    line-height: 1.78;
+  }
+  .prose.prose-lg :where(p):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    line-height: 1.75;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* 문장/단어 중간 강제 줄바꿈 방지 */
+  .text-keep-words {
+    word-break: keep-all;
+    overflow-wrap: normal;
+    line-break: strict;
+  }
+
+  .glass-panel {
+    background: linear-gradient(
+      155deg,
+      oklch(0.995 0.009 95 / 0.82) 0%,
+      oklch(0.985 0.012 95 / 0.68) 100%
+    );
+    backdrop-filter: blur(18px) saturate(1.12);
+    border: 1px solid oklch(1 0 0 / 0.52);
+    box-shadow:
+      0 1px 0 0 oklch(1 0 0 / 0.45) inset,
+      0 32px 72px -36px oklch(0.3 0.035 55 / 0.22),
+      0 10px 28px -14px oklch(0.35 0.04 55 / 0.12);
+  }
+}
+
+@layer base {
+  :root {
+    /* unicode-range로 한글=문막초, 그 외(영·포 라틴)=KG Midnight Memories */
+    --font-sans: "문막초 해반체", "KG Midnight Memories", ui-sans-serif,
+      system-ui, sans-serif;
+    --font-heading: "문막초 해반체", "KG Midnight Memories", ui-sans-serif,
+      system-ui, sans-serif;
+    /* 말 없는 성경 5색 톤: 린넨·먹·올리브·금·테라코타를 세련되게 재해석 */
+    --background: oklch(0.985 0.012 95);
+    --foreground: oklch(0.28 0.035 55);
+    --card: oklch(0.995 0.008 95);
+    --card-foreground: oklch(0.28 0.035 55);
+    --popover: oklch(0.995 0.008 95);
+    --popover-foreground: oklch(0.28 0.035 55);
+    --primary: oklch(0.42 0.09 150);
+    --primary-foreground: oklch(0.99 0.012 95);
+    --secondary: oklch(0.95 0.025 85);
+    --secondary-foreground: oklch(0.3 0.04 55);
+    --muted: oklch(0.95 0.015 92);
+    --muted-foreground: oklch(0.48 0.03 70);
+    --accent: oklch(0.86 0.12 78);
+    --accent-foreground: oklch(0.3 0.04 55);
+    --destructive: oklch(0.52 0.18 28);
+    --destructive-foreground: oklch(0.99 0.01 95);
+    --border: oklch(0.91 0.016 92);
+    --input: oklch(0.91 0.016 92);
+    --ring: oklch(0.5 0.08 150);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --radius: 0.75rem;
+    --radius-md: var(--radius);
+    --sidebar: oklch(0.985 0 0);
+    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.205 0 0);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.97 0 0);
+    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-border: oklch(0.922 0 0);
+    --sidebar-ring: oklch(0.708 0 0);
+  }
+  .dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --destructive-foreground: oklch(0.985 0 0);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+    --chart-1: oklch(0.87 0 0);
+    --chart-2: oklch(0.556 0 0);
+    --chart-3: oklch(0.439 0 0);
+    --chart-4: oklch(0.371 0 0);
+    --chart-5: oklch(0.269 0 0);
+    --sidebar: oklch(0.205 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.488 0.243 264.376);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: oklch(0.556 0 0);
+  }
+  * {
+    border-color: var(--border);
+  }
+  *:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  body {
+    line-height: 1.65;
+    background-color: var(--background);
+    color: var(--foreground);
+    background-image:
+      radial-gradient(
+        120% 70% at 50% -15%,
+        oklch(0.96 0.04 145 / 0.32),
+        transparent 55%
+      ),
+      radial-gradient(
+        90% 55% at 100% 0%,
+        oklch(0.97 0.028 85 / 0.18),
+        transparent 48%
+      );
+  }
+  html {
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    /* KO/PT 전환 시에도 동일 규칙: 단일 웨이트 폰트 합성 볼드로 악센트만 깨지는 현상 방지 */
+    font-synthesis: none;
+  }
+  ::selection {
+    background: oklch(0.45 0.08 150 / 0.22);
+    color: var(--foreground);
+  }
+}
