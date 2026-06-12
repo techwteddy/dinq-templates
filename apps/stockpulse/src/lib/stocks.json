@@ -1,0 +1,856 @@
+[
+  {
+    "ticker": "SENSEXIETF.NS",
+    "fullName": "Icici Prudential Bse Sensex Etf",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "TNIDETF.NS",
+    "fullName": "Tata Nifty India Digital Exchange Traded Fund",
+    "sector": "IT",
+    "company": "TATA",
+    "category": "Other"
+  },
+  {
+    "ticker": "MOLOWVOL.NS",
+    "fullName": "Motilal Oswal BSE Low Volatility ETF",
+    "sector": "MARKET",
+    "company": "MOTILAL",
+    "category": "Other"
+  },
+  {
+    "ticker": "SILVER.NS",
+    "fullName": "Aditya BSL Silver ETF",
+    "sector": "SILVER",
+    "company": "ADITYA",
+    "category": "Other"
+  },
+  {
+    "ticker": "ABSLBANETF.NS",
+    "fullName": "Aditya Birla Sun Life Nifty Bank ETF",
+    "sector": "BANKING",
+    "company": "ADITYA",
+    "category": "Other"
+  },
+  {
+    "ticker": "AXISILVER.NS",
+    "fullName": "Axis Silver ETF",
+    "sector": "SILVER",
+    "company": "AXIS",
+    "category": "Other"
+  },
+  {
+    "ticker": "BANKBEES.NS",
+    "fullName": "Nippon India Etf Nifty Bank Bees",
+    "sector": "BANKING",
+    "company": "NIPPON",
+    "category": "Banking"
+  },
+  {
+    "ticker": "SBIETFQLTY.NS",
+    "fullName": "SBI Nifty 200 Quality 30 ETF",
+    "sector": "MARKET",
+    "company": "SBI",
+    "category": "Other"
+  },
+  {
+    "ticker": "CONSUMIETF.NS",
+    "fullName": "Icici Prudential Nifty India Consumption Etf",
+    "sector": "CONSUMPTION",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "HEALTHIETF.NS",
+    "fullName": "Icici Prudential Nifty Healthcare Etf",
+    "sector": "HEALTHCARE",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "NIFTYQLITY.NS",
+    "fullName": "Aditya BSL Nifty 200 Quality 30 ETF",
+    "sector": "MARKET",
+    "company": "ADITYA",
+    "category": "IT"
+  },
+  {
+    "ticker": "MOHEALTH.NS",
+    "fullName": "Motilal Oswal BSE Healthcare ETF",
+    "sector": "HEALTHCARE",
+    "company": "MOTILAL",
+    "category": "Other"
+  },
+  {
+    "ticker": "AXISHCETF.NS",
+    "fullName": "Axis Nifty Healthcare Etf",
+    "sector": "HEALTHCARE",
+    "company": "AXIS",
+    "category": "Other"
+  },
+  {
+    "ticker": "HDFCLOWVOL.NS",
+    "fullName": "HDFC Nifty100 Low Volatility 30 ETF",
+    "sector": "MARKET",
+    "company": "HDFC",
+    "category": "Other"
+  },
+  {
+    "ticker": "CONSUMBEES.NS",
+    "fullName": "Nippon India ETF Nifty India Consumption",
+    "sector": "CONSUMPTION",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "BFSI.NS",
+    "fullName": "Mirae Asset Nifty Financial Services ETF",
+    "sector": "BANKING & FINANCIAL",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "AUTOIETF.NS",
+    "fullName": "ICICI Prudential Nifty Auto ETF",
+    "sector": "AUTO",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "HDFCMOMENT.NS",
+    "fullName": "HDFC Nifty200 Momentum 30 ETF",
+    "sector": "MARKET",
+    "company": "HDFC",
+    "category": "Other"
+  },
+  {
+    "ticker": "ALPHAETF.NS",
+    "fullName": "Mirae Asset Nifty 200 Alpha 30 ETF",
+    "sector": "MARKET",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "QGOLDHALF.NS",
+    "fullName": "Quantum Gold Fund",
+    "sector": "GOLD",
+    "company": "QUANTUM",
+    "category": "Other"
+  },
+  {
+    "ticker": "HDFCNIF100.NS",
+    "fullName": "HDFC Nifty 100 ETF",
+    "sector": "MARKET",
+    "company": "HDFC",
+    "category": "Other"
+  },
+  {
+    "ticker": "AXISGOLD.NS",
+    "fullName": "Axis Gold ETF",
+    "sector": "GOLD",
+    "company": "AXIS",
+    "category": "Other"
+  },
+  {
+    "ticker": "NIF100BEES.NS",
+    "fullName": "Nippon India ETF Nifty 100",
+    "sector": "MARKET",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "HDFCNEXT50.NS",
+    "fullName": "HDFC Nifty NEXT 50 ETF",
+    "sector": "MARKET",
+    "company": "HDFC",
+    "category": "Other"
+  },
+  {
+    "ticker": "INFRABEES.NS",
+    "fullName": "Nippon India ETF Nifty Infrastructure BeES",
+    "sector": "ENERGY & INFRA",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "GOLDIETF.NS",
+    "fullName": "ICICI Prudential Gold ETF",
+    "sector": "GOLD",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "HDFCGOLD.NS",
+    "fullName": "HDFC Gold ETF",
+    "sector": "GOLD",
+    "company": "HDFC",
+    "category": "Other"
+  },
+  {
+    "ticker": "DIVOPPBEES.NS",
+    "fullName": "Nippon India ETF Nifty Dividend Opportunities 50",
+    "sector": "MARKET",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "NV20BEES.NS",
+    "fullName": "Nippon India ETF Nifty 50 Value 20",
+    "sector": "MARKET",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "BSLNIFTY.NS",
+    "fullName": "Aditya Birla Sun Life Nifty 50 ETF",
+    "sector": "MARKET",
+    "company": "ADITYA",
+    "category": "Broad Market"
+  },
+  {
+    "ticker": "QUAL30IETF.NS",
+    "fullName": "ICICI Prudential Nifty 200 Quality 30 ETF",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "GOLDETF.NS",
+    "fullName": "Mirae Asset Gold ETF",
+    "sector": "GOLD",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "ABSLNN50ET.NS",
+    "fullName": "Aditya Birla Sun Life Nifty Next 50 ETF",
+    "sector": "MARKET",
+    "company": "ADITYA",
+    "category": "Other"
+  },
+  {
+    "ticker": "ESILVER.NS",
+    "fullName": "Edelweiss Silver ETF",
+    "sector": "SILVER",
+    "company": "EDELWEISS",
+    "category": "Other"
+  },
+  {
+    "ticker": "NIFTYETF.NS",
+    "fullName": "Mirae Asset Nifty 50 ETF",
+    "sector": "MARKET",
+    "company": "MIRAE",
+    "category": "Broad Market"
+  },
+  {
+    "ticker": "FINIETF.NS",
+    "fullName": "ICICI Pru Nifty Financial Services Ex-Bank ETF",
+    "sector": "FINANCIAL SERVICES",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "SENSEXETF.NS",
+    "fullName": "Mirae Asset BSE Sensex ETF",
+    "sector": "MARKET",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "ICICIB22.NS",
+    "fullName": "Bharat 22 ETF",
+    "sector": "PSU",
+    "company": "BHARAT",
+    "category": "Other"
+  },
+  {
+    "ticker": "MOM100.NS",
+    "fullName": "Motilal Oswal Nifty Midcap 100 ETF",
+    "sector": "MARKET",
+    "company": "MOTILAL",
+    "category": "Other"
+  },
+  {
+    "ticker": "SETFNN50.NS",
+    "fullName": "SBI Nifty Next 50 ETF",
+    "sector": "MARKET",
+    "company": "SBI",
+    "category": "Broad Market"
+  },
+  {
+    "ticker": "SETFNIF50.NS",
+    "fullName": "SBI Nifty 50 ETF",
+    "sector": "MARKET",
+    "company": "SBI",
+    "category": "Broad Market"
+  },
+  {
+    "ticker": "SBIETFIT.NS",
+    "fullName": "SBI Nifty IT ETF",
+    "sector": "IT",
+    "company": "SBI",
+    "category": "IT"
+  },
+  {
+    "ticker": "LOWVOLIETF.NS",
+    "fullName": "ICICI Prudential Nifty 100 Low Vol 30 ETF",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "AXISBNKETF.NS",
+    "fullName": "Axis Nifty Bank Etf",
+    "sector": "BANKING",
+    "company": "AXIS",
+    "category": "Other"
+  },
+  {
+    "ticker": "HEALTHY.NS",
+    "fullName": "Aditya BSL Nifty Healthcare ETF",
+    "sector": "HEALTHCARE",
+    "company": "ADITYA",
+    "category": "Other"
+  },
+  {
+    "ticker": "BANKETF.NS",
+    "fullName": "Mirae Asset Nifty Bank ETF",
+    "sector": "BANKING",
+    "company": "MIRAE",
+    "category": "Banking"
+  },
+  {
+    "ticker": "NIF100IETF.NS",
+    "fullName": "ICICI Prudential Nifty 100 ETF",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "PSUBNKBEES.NS",
+    "fullName": "Nippon India ETF Nifty PSU Bank BeES",
+    "sector": "PSU BANKING",
+    "company": "NIPPON",
+    "category": "Banking"
+  },
+  {
+    "ticker": "SETFNIFBK.NS",
+    "fullName": "SBI Nifty Bank ETF",
+    "sector": "BANKING",
+    "company": "SBI",
+    "category": "Broad Market"
+  },
+  {
+    "ticker": "MAKEINDIA.NS",
+    "fullName": "Mirae Asset Nifty India Manufacturing ETF",
+    "sector": "MANUFACTURING",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "AUTOBEES.NS",
+    "fullName": "Nippon India Nifty Auto ETF",
+    "sector": "AUTO",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "MIDSELIETF.NS",
+    "fullName": "Icici Prudential Bse Midcap Select Etf",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "PSUBNKIETF.NS",
+    "fullName": "ICICI Prudential Nifty PSU Bank ETF",
+    "sector": "PSU BANKING",
+    "company": "ICICI",
+    "category": "Banking"
+  },
+  {
+    "ticker": "PVTBANIETF.NS",
+    "fullName": "Icici Prudential Nifty Private Bank Etf",
+    "sector": "PRIVATE BANKING",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "TECH.NS",
+    "fullName": "Aditya BSL Nifty IT ETF",
+    "sector": "IT",
+    "company": "ADITYA",
+    "category": "Other"
+  },
+  {
+    "ticker": "NV20IETF.NS",
+    "fullName": "Icici Prudential Nifty50 Value 20 Etf",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "HDFCSILVER.NS",
+    "fullName": "HDFC Silver ETF",
+    "sector": "SILVER",
+    "company": "HDFC",
+    "category": "Other"
+  },
+  {
+    "ticker": "ALPL30IETF.NS",
+    "fullName": "ICICI Pru Nifty Alpha Low- Volatility 30 ETF",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "SILVERIETF.NS",
+    "fullName": "ICICI Prudential Silver ETF",
+    "sector": "SILVER",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "COMMOIETF.NS",
+    "fullName": "ICICI Pru Nifty Commodities ETF",
+    "sector": "COMMODITIES",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "BSLGOLDETF.NS",
+    "fullName": "Aditya Birla Sun Life Gold ETF",
+    "sector": "GOLD",
+    "company": "ADITYA",
+    "category": "Other"
+  },
+  {
+    "ticker": "MOVALUE.NS",
+    "fullName": "Motilal Oswal BSE Enhanced Value ETF",
+    "sector": "MARKET",
+    "company": "MOTILAL",
+    "category": "Other"
+  },
+  {
+    "ticker": "MID150BEES.NS",
+    "fullName": "Nippon India ETF Nifty Midcap 150",
+    "sector": "MARKET",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "MOMOMENTUM.NS",
+    "fullName": "Motilal Oswal Nifty 200 Momentum 30 ETF",
+    "sector": "MARKET",
+    "company": "MOTILAL",
+    "category": "Other"
+  },
+  {
+    "ticker": "MOMENTUM.NS",
+    "fullName": "Aditya BSL Nifty 200 Momentum 30 ETF",
+    "sector": "MARKET",
+    "company": "ADITYA",
+    "category": "Other"
+  },
+  {
+    "ticker": "NIFTYBEES.NS",
+    "fullName": "Nippon India ETF Nifty 50 BeES",
+    "sector": "MARKET",
+    "company": "NIPPON",
+    "category": "Broad Market"
+  },
+  {
+    "ticker": "NIFTYIETF.NS",
+    "fullName": "Icici Prudential Nifty 50 Etf",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Broad Market"
+  },
+  {
+    "ticker": "HDFCNIFTY.NS",
+    "fullName": "HDFC Nifty 50 ETF",
+    "sector": "MARKET",
+    "company": "HDFC",
+    "category": "Broad Market"
+  },
+  {
+    "ticker": "MIDCAP.NS",
+    "fullName": "Kotak Nifty Midcap 50 ETF",
+    "sector": "MARKET",
+    "company": "KOTAK",
+    "category": "Other"
+  },
+  {
+    "ticker": "HDFCSML250.NS",
+    "fullName": "HDFC NIFTY Smallcap 250 ETF",
+    "sector": "MARKET",
+    "company": "HDFC",
+    "category": "Other"
+  },
+  {
+    "ticker": "SMALL250.NS",
+    "fullName": "Mirae Asset Nifty Smallcap 250 ETF",
+    "sector": "MARKET",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "JUNIORBEES.NS",
+    "fullName": "Nippon India ETF Nifty Next 50 Junior BeES",
+    "sector": "MARKET",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "NEXT50IETF.NS",
+    "fullName": "ICICI Prudential Nifty Next 50 ETF",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "NEXT50.NS",
+    "fullName": "Mirae Asset Nifty Next 50 ETF",
+    "sector": "MARKET",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "MOMIDMTM.NS",
+    "fullName": "Motilal Oswal Nifty Midcap150 Momentum 50 ETF",
+    "sector": "MARKET",
+    "company": "MOTILAL",
+    "category": "Other"
+  },
+  {
+    "ticker": "MOM30IETF.NS",
+    "fullName": "ICICI Prudential Nifty 200 Momentum 30 ETF",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "GROWWDEFNC.NS",
+    "fullName": "Groww Nifty India Defence ETF",
+    "sector": "DEFENCE",
+    "company": "GROWW",
+    "category": "Other"
+  },
+  {
+    "ticker": "MODEFENCE.NS",
+    "fullName": "Motilal Oswal Nifty India Defence ETF",
+    "sector": "DEFENCE",
+    "company": "MOTILAL",
+    "category": "Other"
+  },
+  {
+    "ticker": "CPSEETF.NS",
+    "fullName": "Cpse Etf",
+    "sector": "PSU",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "FMCGIETF.NS",
+    "fullName": "Icici Prudential Nifty Fmcg Etf",
+    "sector": "FMCG",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "ITBEES.NS",
+    "fullName": "Nippon India ETF Nifty IT",
+    "sector": "IT",
+    "company": "NIPPON",
+    "category": "IT"
+  },
+  {
+    "ticker": "ITETF.NS",
+    "fullName": "Mirae Asset Nifty IT ETF",
+    "sector": "IT",
+    "company": "MIRAE",
+    "category": "IT"
+  },
+  {
+    "ticker": "ITIETF.NS",
+    "fullName": "Icici Prudential Nifty It Etf",
+    "sector": "IT",
+    "company": "ICICI",
+    "category": "IT"
+  },
+  {
+    "ticker": "IT.NS",
+    "fullName": "Kotak Nifty It ETF",
+    "sector": "IT",
+    "company": "KOTAK",
+    "category": "IT"
+  },
+  {
+    "ticker": "OILIETF.NS",
+    "fullName": "ICICI Prudential Nifty Oil & Gas ETF",
+    "sector": "OIL & GAS",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "MOENERGY.NS",
+    "fullName": "Motilal Oswal Nifty Energy ETF",
+    "sector": "ENERGY",
+    "company": "MOTILAL",
+    "category": "Other"
+  },
+  {
+    "ticker": "ENERGY.NS",
+    "fullName": "Mirae Asset Nifty Energy ETF",
+    "sector": "ENERGY",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "GROWWPOWER.NS",
+    "fullName": "Groww BSE Power ETF",
+    "sector": "POWER",
+    "company": "GROWW",
+    "category": "Other"
+  },
+  {
+    "ticker": "BANKIETF.NS",
+    "fullName": "Icici Prudential Nifty Bank Etf",
+    "sector": "BANKING",
+    "company": "ICICI",
+    "category": "Banking"
+  },
+  {
+    "ticker": "INFRAIETF.NS",
+    "fullName": "ICICI Prudential Nifty Infrastructure ETF",
+    "sector": "ENERGY & INFRA",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "PHARMABEES.NS",
+    "fullName": "Nippon India Nifty Pharma ETF",
+    "sector": "PHARMA",
+    "company": "NIPPON",
+    "category": "Pharma"
+  },
+  {
+    "ticker": "METALIETF.NS",
+    "fullName": "ICICI Prudential Nifty Metal ETF",
+    "sector": "COMMODITIES",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "MIDCAPETF.NS",
+    "fullName": "Mirae Asset Nifty Midcap 150 ETF",
+    "sector": "MARKET",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "MIDCAPIETF.NS",
+    "fullName": "Icici Prudential Nifty Midcap 150 Etf",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "HDFCMID150.NS",
+    "fullName": "HDFC NIFTY Midcap 150 ETF",
+    "sector": "MARKET",
+    "company": "HDFC",
+    "category": "Other"
+  },
+  {
+    "ticker": "MID150CASE.NS",
+    "fullName": "Zerodha Nifty Midcap 150 ETF",
+    "sector": "MARKET",
+    "company": "ZERODHA",
+    "category": "Other"
+  },
+  {
+    "ticker": "INTERNET.NS",
+    "fullName": "Mirae Asset Nifty India Internet ETF",
+    "sector": "E-COMMERCE",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "TATAGOLD.NS",
+    "fullName": "Tata Gold Exchange Traded Fund",
+    "sector": "GOLD",
+    "company": "TATA",
+    "category": "Other"
+  },
+  {
+    "ticker": "SETFGOLD.NS",
+    "fullName": "SBI Gold ETF",
+    "sector": "GOLD",
+    "company": "SBI",
+    "category": "Broad Market"
+  },
+  {
+    "ticker": "GOLDCASE.NS",
+    "fullName": "Zerodha Gold ETF",
+    "sector": "GOLD",
+    "company": "ZERODHA",
+    "category": "Other"
+  },
+  {
+    "ticker": "GROWWGOLD.NS",
+    "fullName": "Groww Gold ETF",
+    "sector": "GOLD",
+    "company": "GROWW",
+    "category": "Other"
+  },
+  {
+    "ticker": "GOLDBEES.NS",
+    "fullName": "Nippon India ETF Gold BeES",
+    "sector": "GOLD",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "SBISILVER.NS",
+    "fullName": "Sbi Silver ETF",
+    "sector": "SILVER",
+    "company": "SBI",
+    "category": "Other"
+  },
+  {
+    "ticker": "SILVERBEES.NS",
+    "fullName": "Nippon India Silver ETF",
+    "sector": "SILVER",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "SILVERCASE.NS",
+    "fullName": "Zerodha Silver ETF",
+    "sector": "SILVER",
+    "company": "ZERODHA",
+    "category": "Other"
+  },
+  {
+    "ticker": "GROWWSLVR.NS",
+    "fullName": "Groww Silver ETF",
+    "sector": "SILVER",
+    "company": "GROWW",
+    "category": "Other"
+  },
+  {
+    "ticker": "SILVER1.NS",
+    "fullName": "Kotak Silver ETF",
+    "sector": "SILVER",
+    "company": "KOTAK",
+    "category": "Other"
+  },
+  {
+    "ticker": "AONESILVER.NS",
+    "fullName": "Angel One Silver ETF",
+    "sector": "SILVER",
+    "company": "ANGEL",
+    "category": "Other"
+  },
+  {
+    "ticker": "HNGSNGBEES.NS",
+    "fullName": "Nippon India ETF Hang Seng BeES",
+    "sector": "INTERNATIONAL",
+    "company": "NIPPON",
+    "category": "Other"
+  },
+  {
+    "ticker": "MAHKTECH.NS",
+    "fullName": "Mirae Asset Hang Seng TECH ETF",
+    "sector": "INTERNATIONAL",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "MAFANG.NS",
+    "fullName": "Mirae Asset NYSE FANG+ ETF",
+    "sector": "INTERNATIONAL",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "MON100.NS",
+    "fullName": "Motilal Oswal NASDAQ 100 ETF",
+    "sector": "INTERNATIONAL",
+    "company": "MOTILAL",
+    "category": "Other"
+  },
+  {
+    "ticker": "MONQ50.NS",
+    "fullName": "Motilal Oswal NASDAQ Q 50 ETF",
+    "sector": "INTERNATIONAL",
+    "company": "MOTILAL",
+    "category": "Other"
+  },
+  {
+    "ticker": "MASPTOP50.NS",
+    "fullName": "Mirae Asset S&P 500 Top 50 ETF",
+    "sector": "INTERNATIONAL",
+    "company": "MIRAE",
+    "category": "Other"
+  },
+  {
+    "ticker": "GROWWCHEM.NS",
+    "fullName": "Groww Nifty Chemicals ETF",
+    "sector": "CHEMICAL",
+    "company": "GROWW",
+    "category": "Other"
+  },
+  {
+    "ticker": "CHEMICAL.NS",
+    "fullName": "Kotak Nifty Chemicals ETF",
+    "sector": "CHEMICAL",
+    "company": "KOTAK",
+    "category": "Other"
+  },
+  {
+    "ticker": "LIQUIDCASE.NS",
+    "fullName": "Zerodha Nifty 1D Rate Liquid ETF",
+    "sector": "LIQUID",
+    "company": "ZERODHA",
+    "category": "Other"
+  },
+  {
+    "ticker": "SBILIQETF.NS",
+    "fullName": "SBI NIFTY 1D Rate Liquid ETF - Growth",
+    "sector": "LIQUID",
+    "company": "SBI",
+    "category": "Other"
+  },
+  {
+    "ticker": "SBIMIDMOM.NS",
+    "fullName": "SBI Nifty Midcap 150 Momentum 50 ETF",
+    "sector": "MARKET",
+    "company": "SBI",
+    "category": "Other"
+  },
+  {
+    "ticker": "HDFCBSE500.NS",
+    "fullName": "HDFC BSE 500 ETF",
+    "sector": "MARKET",
+    "company": "HDFC",
+    "category": "Other"
+  },
+  {
+    "ticker": "BSE500IETF.NS",
+    "fullName": "ICICI Prudential BSE 500 ETF",
+    "sector": "MARKET",
+    "company": "ICICI",
+    "category": "Other"
+  },
+  {
+    "ticker": "MONIFTY500.NS",
+    "fullName": "Motilal Oswal Nifty 500 ETF",
+    "sector": "MARKET",
+    "company": "MOTILAL",
+    "category": "Broad Market"
+  }
+]
