@@ -1,0 +1,247 @@
+import { imageSize } from 'image-size';
+import type { GetStaticProps, NextPage } from 'next';
+import Image from 'next/image';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { getPlaiceholder } from 'plaiceholder';
+import { useState } from 'react';
+
+import Modal from '@/components/gallery/Modal';
+import Seo from '@/components/seo/seo';
+
+import GALLERY_JSON from '@/public/gallery/images.json';
+import { groupByYear, toBuckets } from '@/utils/galleryLayout';
+import type { ImageProps } from '@/utils/types';
+import { useMediaColumns } from '@/utils/useMediaColumns';
+
+type Props = { images: ImageProps[] };
+
+const Gallery: NextPage<Props> = ({ images }) => {
+  const router = useRouter();
+  const { photoId } = router.query;
+  const [touchedId, setTouchedId] = useState<string | null>(null);
+
+  const getYear = (img: ImageProps) =>
+    img.date
+      ? new Date(img.date).getFullYear()
+      : Number(img.folder.match(/^\d{4}/)?.[0]) || 0;
+
+  const colCount = useMediaColumns();
+  const byYear = groupByYear(images, getYear);
+
+  return (
+    <>
+      <Seo
+        templateTitle="Gallery"
+        templateUrl="https://fairdataihub.org/gallery"
+        templateDescription="A collection of photos from the FAIR Data Innovations Hub"
+        templateImage="https://kalai.fairdataihub.org/api/generate?title=Gallery&description=A%20collection%20of%20photos%20from%20the%20FAIR%20Data%20Innovations%20Hub&app=fairdataihub&org=fairdataihub"
+      />
+
+      <section className="py-10 pt-30">
+        {photoId && <Modal images={images} />}
+
+        {/* gradient glow parallax layer */}
+        <div aria-hidden className="pointer-events-none fixed inset-0 -z-10">
+          <div className="absolute top-0 left-1/2 h-[720px] w-[1400px] -translate-x-1/2 bg-[radial-gradient(ellipse_at_center,rgba(211,75,171,0.30),rgba(211,75,171,0.12)_40%,transparent_75%)] blur-3xl" />
+        </div>
+
+        <div className="mx-auto max-w-screen-2xl px-4 sm:px-6 lg:px-8">
+          <div className="relative">
+            <div className="mb-10 w-full">
+              <h1 className="py-2 text-4xl font-black">Photo Gallery</h1>
+              <p className="font-asap text-xl text-black sm:text-lg">
+                If you would like a photo removed, please send us a message with
+                the link of the photo through our{` `}
+                <Link
+                  className="text-url hover-underline-animation"
+                  href="/contact-us"
+                >
+                  contact form
+                </Link>
+                .
+              </p>
+            </div>
+          </div>
+
+          {byYear.map(([year, yearImages]) => {
+            // distribute this year's images across N columns
+            const buckets = toBuckets(yearImages, colCount);
+
+            return (
+              <div key={`year-section-${year}`} className="mb-10">
+                <div className="my-8 w-full">
+                  <div className="flex items-center">
+                    <div className="from-primary/10 via-primary/50 to-primary h-px flex-1 rounded-lg bg-gradient-to-r" />
+
+                    <span className="mx-6 text-4xl font-extrabold tracking-tight text-gray-900 select-none sm:text-5xl">
+                      {year}
+                    </span>
+
+                    <div className="from-primary/10 via-primary/50 to-primary h-px flex-1 rounded-lg bg-gradient-to-l" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {buckets.map((col, colIdx) => (
+                    <div
+                      key={`y${year}-col${colIdx}`}
+                      className="flex flex-col gap-4"
+                    >
+                      {col.map(
+                        ({
+                          id,
+                          folder,
+                          name,
+                          width,
+                          height,
+                          blurDataUrl,
+                          alt,
+                          date,
+                          description,
+                        }) => {
+                          const imageUrl = encodeURI(
+                            `https://cdn.fairdataihub.org/gallery/${folder}/${name}`,
+                          );
+                          return (
+                            <Link
+                              key={id}
+                              href={`gallery/?photoId=${id}`}
+                              as={`gallery/p/${id}`}
+                              shallow
+                              onTouchStart={() => setTouchedId(id)}
+                              onTouchEnd={() => setTouchedId(id)}
+                              onTouchCancel={() => setTouchedId(null)}
+                              onMouseLeave={() => setTouchedId(id)}
+                              className={`group relative block cursor-pointer`}
+                            >
+                              <div className="relative transform-gpu overflow-hidden rounded-lg shadow-xs transition duration-300 group-hover:scale-[1.03] group-hover:shadow-xl group-hover:shadow-black/10">
+                                <Image
+                                  alt={alt || description || `Gallery photo`}
+                                  src={imageUrl}
+                                  width={width}
+                                  height={height}
+                                  placeholder="blur"
+                                  blurDataURL={blurDataUrl}
+                                  className="z-0 rounded-lg object-cover"
+                                />
+
+                                {/* hover overlay */}
+                                <div
+                                  className={`pointer-events-none absolute inset-0 rounded-lg bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100 ${
+                                    touchedId === id ? `opacity-100` : ``
+                                  }`}
+                                />
+
+                                {/* caption */}
+                                <div
+                                  className={`pointer-events-none absolute inset-x-0 bottom-0 p-3 opacity-0 transition-opacity duration-300 group-hover:opacity-100 ${
+                                    touchedId === id ? `opacity-100` : ``
+                                  }`}
+                                >
+                                  <p className="text-[11px] font-medium tracking-wide text-white/80">
+                                    {date
+                                      ? (() => {
+                                          const [y, m, d] = (date || ``).split(
+                                            `-`,
+                                          );
+                                          const local = new Date(
+                                            Number(y),
+                                            Number(m) - 1,
+                                            Number(d),
+                                          );
+                                          return local.toLocaleDateString(
+                                            `en-US`,
+                                            {
+                                              year: `numeric`,
+                                              month: `short`,
+                                              day: `numeric`,
+                                            },
+                                          );
+                                        })()
+                                      : null}
+                                  </p>
+                                  <p className="line-clamp-2 text-sm font-semibold text-white">
+                                    {description || alt || ` `}
+                                  </p>
+                                </div>
+                              </div>
+                            </Link>
+                          );
+                        },
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </>
+  );
+};
+
+export default Gallery;
+
+export const getStaticProps: GetStaticProps<Props> = async () => {
+  const sorted_GALLERY_JSON = [...GALLERY_JSON].sort((a, b) =>
+    a.date && b.date ? (a.date > b.date ? 1 : -1) : 0,
+  );
+
+  const imagePromises = sorted_GALLERY_JSON.flatMap((event) =>
+    event.images.map(async (img) => {
+      const imageUrl = encodeURI(
+        `https://cdn.fairdataihub.org/gallery/${event.folder}/${img.name}`,
+      );
+
+      try {
+        const res = await fetch(imageUrl);
+
+        if (!res.ok) {
+          // skip broken image
+          console.warn(`Failed to fetch image ${imageUrl}: ${res.status}`);
+          return null;
+        }
+
+        const arrayBuffer = await res.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        const { width, height } = imageSize(new Uint8Array(buffer));
+        const blurDataUrl = (await getPlaiceholder(buffer)).base64;
+
+        return {
+          id: img.id,
+          folder: event.folder,
+          name: img.name,
+          alt: img.alt,
+          description: event.description,
+          date: event.date,
+          width,
+          height,
+          blurDataUrl,
+        };
+      } catch (err) {
+        console.error(`Error fetching image ${imageUrl}`, err);
+        // decide: either skip or fall back
+        return null;
+      }
+    }),
+  );
+
+  const rawResults = await Promise.all(imagePromises);
+  const results = rawResults.filter(
+    (img): img is NonNullable<typeof img> => img !== null,
+  );
+
+  const ids = results.map((img) => img.id);
+  const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
+  const uniqueDuplicates = [...new Set(duplicateIds)];
+  if (uniqueDuplicates.length > 0) {
+    throw new Error(
+      `Duplicate gallery id(s) found: ${uniqueDuplicates.join(`, `)}. Each image must have a unique id in public/gallery/images.json.`,
+    );
+  }
+
+  // reverse for display (newest first)
+  return { props: { images: results.reverse() } };
+};
