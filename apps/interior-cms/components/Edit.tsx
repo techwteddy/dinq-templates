@@ -1,0 +1,1917 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
+'use client'
+
+import { MoveIcon, ResetIcon, CrossCircledIcon, CheckCircledIcon, TrashIcon, Share2Icon, PlayIcon, UploadIcon, CaretDownIcon, DesktopIcon, MobileIcon, BoxIcon, ViewVerticalIcon, InfoCircledIcon, ImageIcon, ChevronLeftIcon, GearIcon, LightningBoltIcon } from '@radix-ui/react-icons'
+import { AlertDialog, DropdownMenu, Tooltip, AccessibleIcon, Switch, RadioGroup } from 'radix-ui'
+import React, { MouseEvent, PointerEventHandler, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import clsx from 'clsx';
+
+import { Photo, Project, Template, Layout, Photos, Device, Asset, Items } from '@/type/editor'
+import Editor from '@/components/Editor';
+import { deleteProject, updateProject, deleteFiles, uploadFiles } from '@/action/client';
+import { useRouter } from 'next/navigation';
+
+import { v7 as UUIDv7 } from 'uuid'
+import Droppable from './Droppable';
+import { useDrag, UseDragListener } from '@/hook/useDrag';
+import { applyBoxConstrain, between, curry, toStorageURL, alt as alternative, capitalize, groupByRow, extent, getItemsHeight, half, isInsideBox, compressFromFiles, filesToPhotos } from '@/utility/fn';
+import { rebuildPath } from '@/action/server';
+import { Status, StatusType } from './Status';
+
+
+const domain = process.env.NEXT_PUBLIC_DOMAIN
+const siteName = process.env.NEXT_PUBLIC_SITE_NAME
+const bucketName = process.env.NEXT_PUBLIC_SUPABASE_BUCKET_PROJECTS!
+
+const autoFormat = (layout: Layout) => {
+	if(layout.items.length > 0) {
+		const [r, ...rs] = groupByRow(layout.items)
+		const dy = -1 * Math.min(
+			...r.map(v => v.y)
+		)
+		const [n, ...ns] = [r, ...rs].map(row => {
+			const [min, max] = extent(v => ([v.x, v.x + v.w]), row)
+			const dx = half(layout.width) - half(min + max)
+			return row.map(v => {
+				return {
+					...v,
+					x: v.x + dx,
+					y: Math.max(v.y + dy, 0)
+				}
+			})
+		})
+
+		const m = .035
+		const gs = [1, 2, 3, 4, 5].map(v => v * m * layout.width)
+
+		const items = ns.reduce(
+			(a, b) => {
+				const c = a[a.length - 1]
+				const min = Math.max(
+					...c.map(v => v.y + v.h)
+				)
+				const max = Math.min(
+					...b.map(v => v.y)
+				)
+				const diff = max - min
+				const [delta] = gs.toSorted((a, b) =>
+					Math.abs(a - diff) - Math.abs(b - diff)
+				)
+				const d = b.map(v => {
+					return {
+						...v,
+						y: Math.max(v.y + (delta - diff), 0)
+					}
+				})
+				return [...a, d]
+			},
+			[n]
+		).flat()
+
+		const height = getItemsHeight(items)
+
+		return { ...layout, height, items }
+	} else {
+		return layout
+	}
+}
+
+const TextArea = ({ required = false, placeholder, className, value, onChange }: { required?: boolean, placeholder?: string, className?: string, value?: string, onChange: (change: string) => void }) => {
+	const ref = useRef<HTMLTextAreaElement>(null)
+
+	useLayoutEffect(() => {
+		ref.current!.style.height = '0px'
+		ref.current!.style.height = `${ref.current!.scrollHeight}px`
+	}, [])
+
+	return (
+		<textarea
+			ref={ref}
+			placeholder={placeholder}
+			required={required}
+			className={clsx('resize-none overflow-hidden', className)}
+			value={value}
+			onChange={e => {
+				e.target.style.height = '0px'
+				e.target.style.height = `${e.target.scrollHeight}px`
+				onChange(e.target.value)
+			}}
+		/>
+	)
+}
+
+const breakpoint = {
+	desktop: {
+		icon: <DesktopIcon />,
+		breakpoint: 1280
+	},
+	tablet: {
+		icon: <BoxIcon />,
+		breakpoint: 768,
+	},
+	mobile: {
+		icon: <MobileIcon />,
+		breakpoint: 384,
+	}
+}
+
+const breakpoints = Object.keys(breakpoint)
+
+const Bucket = ({ active, onClick, count }: { active: boolean, onClick: PointerEventHandler<HTMLButtonElement>, count: number }) =>
+	<button
+		className={clsx('relative', { 'text-amber-600': active })}
+		onClick={onClick}
+	>
+		<AccessibleIcon.Root label='Show images'>
+			<ImageIcon />
+		</AccessibleIcon.Root>
+		<small className={clsx({ 'hidden': count === 0 }, 'absolute flex flex-col justify-center items-center top-0 left-full -translate-1/2 rounded-full bg-orange-500 text-center size-5 text-light text-tiny font-bold align-middle')}>
+			{count > 100 ? '...' : count}
+		</small>
+	</button>
+
+const AutoFormat = ({ disabled, onClick }: { disabled: boolean, onClick: PointerEventHandler<HTMLButtonElement> }) =>
+	<button
+		className='disabled:opacity-50 disabled:cursor-not-allowed'
+		disabled={disabled}
+		onClick={onClick}
+	>
+		<AccessibleIcon.Root label='Auto format'>
+			<LightningBoltIcon />
+		</AccessibleIcon.Root>
+	</button>
+
+const Reset = ({ disabled, options }: { disabled: boolean, options: [boolean, string, () => void][] }) =>
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger
+			disabled={disabled}
+			className='data-[state=open]:text-amber-600 outline-1 outline-transparent disabled:opacity-50 disabled:cursor-not-allowed'
+		>
+			<AccessibleIcon.Root label='Show layouts options'>
+				<GearIcon />
+			</AccessibleIcon.Root>
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Portal>
+			<DropdownMenu.Content
+				sideOffset={13}
+				side='top'
+				className='
+					flex 
+					flex-col 
+					justify-center 
+					gap-y-0.5
+					font-sans 
+					font-semibold 
+					text-sm 
+					z-50 
+					bg-light 
+					dark:bg-dark
+					ring-1
+					ring-neutral-200 
+					rounded-md 
+					p-1
+					*:data-highlighted:bg-amber-600 
+					*:data-highlighted:text-light
+					*:cursor-pointer
+					*:data-disabled:opacity-50
+					*:data-disabled:cursor-not-allowed
+				'
+			>
+				{
+					options.map(([disabled, screen, callback]) =>
+						<DropdownMenu.Item
+							key={screen}
+							disabled={disabled}
+							className={clsx('capitalize rounded-md px-3 py-1.5 outline-1 outline-transparent')}
+							onSelect={callback}
+						>
+							{`Apply ${screen} layout`}
+						</DropdownMenu.Item>
+					)
+				}
+			</DropdownMenu.Content>
+		</DropdownMenu.Portal>
+	</DropdownMenu.Root>
+
+const MainUpload = ({ uploadAssets }: { uploadAssets: (files: File[]) => Promise<void> }) =>
+	<Droppable className='size-full flex flex-col justify-center items-center' noClick={true} onDrop={uploadAssets}>
+		<section className='flex flex-col justify-center items-center gap-y-5 px-10'>
+			<Droppable onDrop={uploadAssets} noDragsEventBubbling={true}>
+				<button className='cursor-pointer flex justify-center items-center gap-x-2 p-4'>
+					<AccessibleIcon.Root label='Upload images'>
+						<UploadIcon />
+					</AccessibleIcon.Root>
+					<p className='text-3xl font-medium'>Upload images</p>
+				</button>
+			</Droppable>
+			<div className='flex flex-col justify-center items-center gap-y-2 opacity-50 *:text-base *:font-medium'>
+				<small>Supported: PNG, JPG, WEBP, AVIF.</small>
+				<small>Maximum resolution: 4000 x 4000.</small>
+			</div>
+		</section>
+	</Droppable>
+
+type Alert = {
+	open: boolean,
+	title: string,
+	description: string,
+	cancel: { text: string, color: string, callback: () => void },
+	action: { text: string, color: string, callback: () => void },
+}
+
+const Alert = ({ alert, setAlert }: { alert: Alert, setAlert: (alert: Alert) => void }) =>
+	<AlertDialog.Root open={alert.open} onOpenChange={open => setAlert({ ...alert, open })}>
+		<AlertDialog.Portal>
+			<AlertDialog.Overlay className='z-50 fixed inset-0 bg-neutral-300/50' />
+			<AlertDialog.Content
+				className='
+					flex
+					flex-col
+					gap-y-3
+					justify-center
+					font-sans 
+					fixed 
+					top-[50%] 
+					left-[50%] 
+					-translate-x-[50%] 
+					-translate-y-[50%] 
+					min-w-2xs 
+					rounded-md 
+					ring-1
+					ring-neutral-200
+					px-5
+					py-2.5
+					bg-light
+					dark:bg-dark
+					z-50
+				'
+			>
+				<AlertDialog.Title className='font-semibold text-lg'>{alert.title}</AlertDialog.Title>
+				<AlertDialog.Description className='font-semibold text-base opacity-50'>
+					{alert.description}
+				</AlertDialog.Description>
+				<div className='font-bold text-base flex items-center justify-end gap-x-3 *:rounded-md *:cursor-pointer *:px-4 *:py-1 *:hover:bg-amber-600 *:hover:text-light *:transition-colors'>
+					<AlertDialog.Cancel onClick={alert.cancel.callback} className={alert.cancel.color}>{alert.cancel.text}</AlertDialog.Cancel>
+					<AlertDialog.Action onClick={alert.action.callback} className={alert.action.color}>{alert.action.text}</AlertDialog.Action>
+				</div>
+			</AlertDialog.Content>
+		</AlertDialog.Portal>
+	</AlertDialog.Root>
+
+type Multisteps = {
+	open: boolean,
+	input: string,
+	images: Photos
+}
+
+const Multisteps = ({ onSkip, onNext, multisteps, setMultisteps }: { onSkip: () => void, onNext: () => void, multisteps: Multisteps, setMultisteps: (multisteps: Multisteps) => void }) => {
+	const focusRef = useRef<HTMLInputElement>(null)
+	const onEnter = (e: React.KeyboardEvent) => {
+		if(e.key === 'Enter') {
+			e.preventDefault()
+			onNext()
+		}
+	}
+	return (
+		<AlertDialog.Root open={multisteps.open && multisteps.images.length > 0} onOpenChange={open => setMultisteps({ ...multisteps, open })}>
+			<AlertDialog.Portal>
+				<AlertDialog.Overlay className='z-50 fixed inset-0 bg-neutral-300/50' />
+				<AlertDialog.Content
+					onKeyDown={onEnter}
+					autoFocus={false}
+					className='
+					flex
+					flex-col
+					max-w-lg
+					w-full
+					items-center
+					p-4
+					gap-8
+					font-sans 
+					fixed 
+					top-[50%] 
+					left-[50%] 
+					-translate-x-[50%] 
+					-translate-y-[50%] 
+					rounded-md 
+					ring-1
+					ring-neutral-200
+					bg-light
+					dark:bg-dark
+					z-50
+					focus:outline-1
+					focus:outline-neutral-200
+				'
+				>
+					{
+						multisteps.images.slice(0, 1).map(v =>
+							<img
+								key={v.id}
+								className='object-cover object-center aspect-square rounded-md w-full h-auto'
+								width={v.width}
+								height={v.height}
+								src={v.src}
+								alt={v.alt}
+							/>
+						)
+					}
+					<div className='flex flex-col items-center justify-center gap-1 text-center'>
+						<AlertDialog.Title className='font-bold text-lg'>Set Image Description</AlertDialog.Title>
+						<AlertDialog.Description className='font-semibold text-base opacity-50'>
+							Write short description about this image.
+						</AlertDialog.Description>
+					</div>
+					<fieldset>
+						<label className='sr-only' htmlFor='asset'>Description</label>
+						<input
+							ref={focusRef}
+							id='asset'
+							autoFocus={true}
+							className='px-2 py-1 rounded-md  outline-1 outline-neutral-200 focus:outline-amber-600 w-full font-semibold text-base'
+							placeholder='e.g., Scandinavian chair'
+							type='text'
+							value={multisteps.input}
+							onChange={e => setMultisteps({ ...multisteps, input: e.target.value })}
+						/>
+					</fieldset>
+					<div className='font-bold text-base flex items-center *:focus:outline-1 *:outline-neutral-200 justify-between w-full *:rounded-md *:cursor-pointer *:px-4 *:py-1 *:transition-colors *:hover:bg-amber-600 *:hover:text-light'>
+						<AlertDialog.Cancel className='opacity-50 hover:opacity-100 transition-opacity' onClick={onSkip}>Skip All</AlertDialog.Cancel>
+						{
+							multisteps.images.length > 1
+								? <button onClick={() => { onNext(); focusRef.current!.focus() }}>Next</button>
+								: <AlertDialog.Action onClick={onNext}>Done</AlertDialog.Action>
+						}
+					</div>
+				</AlertDialog.Content>
+			</AlertDialog.Portal>
+		</AlertDialog.Root>
+	)
+}
+
+const Sensor = ({ ref, style, active }: { ref: React.RefObject<HTMLDivElement>, style: React.CSSProperties, active: boolean }) =>
+	<div className='absolute top-0 left-0 size-full flex flex-col justify-center items-center pointer-events-none'>
+		<div
+			ref={ref}
+			style={style}
+			className={clsx({ 'outline-1 outline-blue-500': active })}
+		/>
+	</div>
+
+const MainEditorHeader = ({ errors, name, location, story, tagline, setName, setLocation, setStory, setTagline }: {
+	errors: string[],
+	name: string,
+	location: string,
+	story: string,
+	tagline: string,
+	setName: (value: string) => void,
+	setLocation: (value: string) => void,
+	setStory: (value: string) => void,
+	setTagline: (value: string) => void
+}) => (
+	<header className='w-full h-auto max-w-3xl flex flex-col justify-center items-center gap-y-10 *:w-full'>
+		<div className='flex flex-col justify-center items-center font-serif'>
+			<input
+				required={true}
+				className={clsx('text-2xl py-2 px-4 text-center focus:outline-1 focus:outline-amber-600', { 'outline-1 outline-red-500': errors.includes('name') })}
+				type='text'
+				placeholder='Name'
+				value={name}
+				onChange={e => setName(e.target.value)}
+			/>
+			<input
+				required={true}
+				className={clsx('text-sm py-2 px-4 text-center focus:outline-1 focus:outline-amber-600', { 'outline-1 outline-red-500': errors.includes('location') })}
+				type='text'
+				placeholder='Location'
+				value={location}
+				onChange={e => setLocation(e.target.value)}
+			/>
+		</div>
+		<TextArea
+			required={true}
+			className={clsx('py-2 px-4 max-w-lg font-sans text-lg font-semibold text-center focus:outline-1 focus:outline-amber-600', { 'outline-1 outline-red-500': errors.includes('story') })}
+			placeholder='Story'
+			value={story}
+			onChange={setStory}
+		/>
+		<TextArea
+			required={true}
+			className={clsx('py-2 px-4 font-serif text-lg leading-9 text-center focus:outline-1 focus:outline-amber-600', { 'outline-1 outline-red-500': errors.includes('tagline') })}
+			placeholder='Tagline'
+			value={tagline}
+			onChange={setTagline}
+		/>
+	</header>
+)
+
+const MainEditorBody = ({
+	layout,
+	setLayout,
+	asset,
+	setAsset
+}: {
+	layout: Layout,
+	setLayout: (fn: (layout: Layout) => Layout) => void,
+	asset: Asset,
+	setAsset: (fn: (asset: Asset) => Asset) => void
+}) =>
+	layout.items.length > 0
+		? <Editor
+			key={layout.width}
+			asset={asset}
+			setAsset={setAsset}
+			layout={layout}
+			setLayout={setLayout}
+		/>
+		: <section className='size-full flex flex-col justify-center items-center'>
+			<div style={{ width: layout.width + 'px', height: '100%' }} className='size-full min-h-100 outline-1 outline-neutral-200 flex flex-col items-center justify-center gap-y-5 px-10'>
+				<div className='flex justify-center items-center gap-x-2'>
+					<AccessibleIcon.Root label='Drop here'>
+						<MoveIcon />
+					</AccessibleIcon.Root>
+					<p className='text-3xl font-medium'>Drop here</p>
+				</div>
+				<small className='opacity-50 text-base font-medium'>Drag and drop images from the sidebar here to start editing.</small>
+			</div>
+		</section>
+
+const RightHeader = ({ onPreview, published, onUnpublish, onPublish, menu, setMenu }: { onPreview: () => void, published: boolean, onUnpublish: () => void, onPublish: () => void, menu: boolean, setMenu: (value: boolean) => void }) =>
+	<div className='flex size-full justify-between items-center min-h-20 *:w-auto'>
+		<div className='flex flex-row justify-center items-center rounded-md *:h-full'>
+			<button onClick={() => onPreview()} className='rounded-md transition-colors hover:bg-amber-600 hover:text-light p-2 cursor-pointer'>
+				<AccessibleIcon.Root label='Preview'>
+					<PlayIcon />
+				</AccessibleIcon.Root>
+			</button>
+			<DropdownMenu.Root>
+				<DropdownMenu.Trigger className='rounded-md transition-colors hover:bg-amber-600 hover:text-light px-0.5 py-2 cursor-pointer'>
+					<AccessibleIcon.Root label='Show action menu'>
+						<CaretDownIcon />
+					</AccessibleIcon.Root>
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Portal>
+					<DropdownMenu.Content
+						align='end'
+						className='
+							flex 
+							flex-col 
+							items-center 
+							justify-center 
+							gap-y-0.5
+							font-sans 
+							font-semibold 
+							text-sm 
+							z-50 
+							bg-light 
+							dark:bg-dark
+							ring-1
+							ring-neutral-200 
+							rounded-md 
+							p-1
+							*:data-highlighted:bg-amber-600
+							*:data-highlighted:text-light
+						'
+					>
+						<DropdownMenu.Item
+							className='flex gap-x-1 w-full items-center rounded-md px-4 py-1.5 cursor-pointer'
+							onSelect={() => onPreview()}
+						>
+							<span>
+								<AccessibleIcon.Root label='Preview'>
+									<PlayIcon />
+								</AccessibleIcon.Root>
+							</span>
+							<span>Preview</span>
+						</DropdownMenu.Item>
+						<DropdownMenu.Separator className='h-px my-0.5 bg-neutral-200 w-full' />
+						{
+							published
+								? <DropdownMenu.Item
+									className='flex gap-x-1 w-full items-center rounded-md px-4 py-1.5 cursor-pointer'
+									onSelect={() => onUnpublish()}
+								>
+									<span>
+										<AccessibleIcon.Root label='Unpublish'>
+											<ResetIcon />
+										</AccessibleIcon.Root>
+									</span>
+									<span>Unpublish</span>
+								</DropdownMenu.Item>
+								: null
+						}
+						<DropdownMenu.Item
+							className='flex gap-x-1 w-full items-center rounded-md px-4 py-1.5 cursor-pointer'
+							onSelect={() => onPublish()}
+						>
+							<span>
+								<AccessibleIcon.Root label='Publish'>
+									<Share2Icon />
+								</AccessibleIcon.Root>
+							</span>
+							<span>{published ? 'Update' : 'Publish'}</span>
+						</DropdownMenu.Item>
+					</DropdownMenu.Content>
+				</DropdownMenu.Portal>
+			</DropdownMenu.Root>
+		</div>
+		<button onClick={() => setMenu(!menu)} className='flex p-2 justify-center items-center rounded-md transition-colors hover:bg-amber-600 hover:text-light cursor-pointer'>
+			<AccessibleIcon.Root label='Toggle menu'>
+				<ViewVerticalIcon />
+			</AccessibleIcon.Root>
+		</button>
+	</div>
+
+const RightMain = ({
+	errors,
+	category,
+	setCategory,
+	slug,
+	setSlug,
+	title,
+	setTitle,
+	description,
+	setDescription,
+	featured,
+	setFeatured
+}: {
+	errors: string[],
+	category: string,
+	setCategory: (category: Project['category']) => void,
+	slug: string,
+	setSlug: (slug: string) => void,
+	title: string,
+	setTitle: (title: string) => void,
+	description: string,
+	setDescription: (description: string) => void,
+	featured: boolean,
+	setFeatured: (featured: boolean) => void
+}) =>
+	<div className='flex flex-col justify-center items-stretch h-max w-full gap-y-10'>
+		<div className='flex items-center gap-x-4'>
+			<small className='text-base font-semibold opacity-50'>Category:</small>
+			<RadioGroup.Root value={category} onValueChange={v => setCategory(v as Project['category'])} className='flex gap-x-4'>
+				{
+					['residential', 'commercial'].map(v =>
+						<div key={v} className='flex gap-x-2 items-center justify-center'>
+							<RadioGroup.Item value={v} id={v} className='peer size-4 rounded-full flex items-center justify-center outline-1 outline-neutral-300 cursor-pointer'>
+								<RadioGroup.Indicator className='rounded-full size-2 bg-amber-600' />
+							</RadioGroup.Item>
+							<label className='text-base font-medium cursor-pointer' htmlFor={v}>{capitalize(v)}</label>
+						</div>
+					)
+				}
+			</RadioGroup.Root>
+		</div>
+		<div>
+			<label htmlFor='slug' className='text-base font-medium sr-only'>Slug</label>
+			<input
+				id='slug'
+				required={true}
+				onChange={e => setSlug(e.target.value)}
+				onBlur={e => setSlug(e.target.value.toLowerCase().trim().split(' ').join('-'))}
+				value={slug}
+				className={clsx('text-lg font-medium w-full px-3 py-1.5 rounded-xl outline-1 transition-colors outline-neutral-200 focus:outline-amber-600', { 'outline-1 outline-red-500': errors.includes('slug') })}
+				placeholder='Slug'
+				type='text'
+			/>
+			<small className='text-base font-medium opacity-50'>{`${domain}/projects/${slug}`}</small>
+		</div>
+		<div>
+			<label htmlFor='title' className='text-base font-medium sr-only'>Title</label>
+			<input
+				id='title'
+				required={true}
+				onChange={e => setTitle(e.target.value)}
+				value={title}
+				className={clsx('text-lg font-medium w-full px-3 py-1.5 rounded-xl outline-1 transition-colors outline-neutral-200 focus:outline-amber-600', { 'outline-1 outline-red-500': errors.includes('title') })}
+				placeholder='Title'
+				type='text'
+			/>
+			<small className='text-base font-medium opacity-50'>{`Recommended: 60 characters. You’ve used ${title.length}`}</small>
+		</div>
+		<div>
+			<label htmlFor='description' className='text-base font-medium sr-only'>Description</label>
+			<textarea
+				id='description'
+				required={true}
+				onChange={e => setDescription(e.target.value)}
+				value={description}
+				className={clsx('text-lg font-medium w-full px-3 py-1.5 rounded-xl outline-1 transition-colors outline-neutral-200 focus:outline-amber-600 min-h-30', { 'outline-1 outline-red-500': errors.includes('title') })}
+				placeholder='Description'
+			/>
+			<small className='text-base font-medium opacity-50'>{`Recommended: 145 characters. You’ve used ${description.length}`}</small>
+			<style jsx>{`#description { scrollbar-width: thin;}`}</style>
+		</div>
+		<div className='flex items-center gap-x-2 rounded-full'>
+			<Switch.Root
+				id='featured'
+				className={clsx('transition-colors peer w-8 h-4 rounded-full outline-transparent cursor-pointer', featured ? 'bg-amber-600' : 'bg-neutral-200')}
+				onCheckedChange={v => setFeatured(v)}
+				checked={featured}
+			>
+				<Switch.Thumb
+					className={clsx(
+						'block size-4 rounded-full bg-white shadow-md ring-1 ring-neutral-200 transition-[translate] will-change-transform ease-in-out duration-200',
+						featured ? 'translate-x-4' : 'translate-x-0'
+					)}
+				/>
+			</Switch.Root>
+			<label className='text-base font-semibold cursor-pointer' htmlFor='featured'>Feature in Homepage</label>
+		</div>
+	</div>
+
+
+const RightFooter = ({ onDelete }: { onDelete: () => void }) =>
+	<button onClick={() => onDelete()} className='flex gap-x-1 justify-center items-center p-2 rounded-lg transition-colors cursor-pointer hover:bg-amber-600 hover:text-light'>
+		<span><TrashIcon /></span>
+		<span className='font-semibold text-base leading-none'>Delete</span>
+	</button>
+
+const WithTooltip = ({ children, tooltip, side }: { children: React.ReactNode, tooltip: string, side: 'top' | 'right' | 'bottom' | 'left' }) => (
+	<Tooltip.Provider>
+		<Tooltip.Root>
+			<Tooltip.Trigger asChild>
+				{children}
+			</Tooltip.Trigger>
+			<Tooltip.Portal>
+				<Tooltip.Content side={side} sideOffset={10} className='px-2 py-1 capitalize font-sans font-semibold text-sm text-center rounded-sm bg-light dark:bg-dark outline-1 outline-neutral-200 z-50'>
+					{tooltip}
+				</Tooltip.Content>
+			</Tooltip.Portal>
+		</Tooltip.Root>
+	</Tooltip.Provider>
+)
+
+const Breakpoint = ({
+	className,
+	breakpoint,
+	setBreakpoint
+}: {
+	className: string,
+	breakpoint: string,
+	setBreakpoint: (breakpoint: Device) => void
+}) => {
+	const Item = ({
+		label,
+		active,
+		onClick,
+		icon,
+	}: {
+		label: string,
+		active: boolean,
+		onClick: () => void,
+		icon: React.JSX.Element
+	}) =>
+		<WithTooltip side='bottom' tooltip={label + ' view'}>
+			<button
+				className={clsx('relative flex items-center justify-center rounded-sm cursor-pointer transition-colors hover:text-amber-600 size-full p-2', { 'text-amber-600': active })}
+				onClick={() => onClick()}
+			>
+				<AccessibleIcon.Root label={label}>
+					{icon}
+				</AccessibleIcon.Root>
+			</button>
+		</WithTooltip>
+
+	return (
+		<ul className={clsx(className, 'bg-light dark:bg-dark flex justify-center items-center gap-x-5 outline-1 p-1 outline-neutral-200 rounded-md')}>
+			<li className='size-full' key={'desktop'}>
+				<Item
+					label={'desktop'}
+					active={'desktop' === breakpoint}
+					onClick={() => setBreakpoint('desktop')}
+					icon={<DesktopIcon />}
+				/>
+			</li>
+			<li className='size-full' key={'tablet'}>
+				<Item
+					label={'tablet'}
+					active={'tablet' === breakpoint}
+					onClick={() => setBreakpoint('tablet')}
+					icon={<BoxIcon />}
+				/>
+			</li>
+			<li className='size-full' key={'mobile'}>
+				<Item
+					label={'mobile'}
+					active={'mobile' === breakpoint}
+					onClick={() => setBreakpoint('mobile')}
+					icon={<MobileIcon />}
+				/>
+			</li>
+		</ul>
+	)
+}
+
+const MainHeader = (
+	{ onBack, content, menu, setMenu, breakpoint, setBreakpoint }: {
+		onBack: () => void,
+		content: boolean,
+		menu: boolean,
+		setMenu: (value: boolean) => void,
+		breakpoint: string,
+		setBreakpoint: (breakpoint: Device) => void
+	}
+) => (
+	<header className='z-50 sticky top-0 left-0 right-0 size-full grid grid-cols-3 items-center min-h-20 *:w-auto pointer-events-none'>
+		<button onClick={onBack} className='justify-self-start cursor-pointer flex justify-center items-center transition-colors hover:bg-amber-600 hover:text-light rounded-md p-2 text-center pointer-events-auto'>
+			<AccessibleIcon.Root label='Back'>
+				<ChevronLeftIcon />
+			</AccessibleIcon.Root>
+		</button>
+		{
+			content
+				? <>
+					<Breakpoint
+						className='justify-self-center pointer-events-auto'
+						breakpoint={breakpoint}
+						setBreakpoint={setBreakpoint}
+					/>
+					<button onClick={e => { e.stopPropagation(); setMenu(!menu) }} className='pointer-events-auto p-2 justify-self-end cursor-pointer flex gap-x-2 justify-center items-center rounded-md transition-colors hover:bg-amber-600 hover:text-light' >
+						<AccessibleIcon.Root label='Toggle SEO settings'>
+							<ViewVerticalIcon />
+						</AccessibleIcon.Root>
+					</button>
+				</>
+				: null
+		}
+	</header>
+)
+
+const changes = (prev: Partial<Project>, curr: Partial<Project>): Partial<Project> =>
+	Object.entries(curr).filter(([k, v]) =>
+		!Object.is(prev[k as keyof Partial<Project>], v)
+	).reduce((acc, [k, v]) =>
+		({ ...acc, [k]: v }),
+		{}
+	)
+
+const formatAssets = (id: string, images: Photos): Photos => images.map(v => {
+	return { ...v, src: toStorageURL(bucketName, id + '/' + v.id + '.jpeg') }
+})
+
+const formatChanges = (id: string, changes: Partial<Project>) => {
+	if('assets' in changes) {
+		const assets = formatAssets(id, changes.assets!)
+		return { ...changes, id, assets }
+	} else {
+		return { ...changes, id }
+	}
+}
+
+const Left = ({ onDelete, asset, onDrag, onDrop }: {
+	onDelete: (items: Photos) => void,
+	asset: Asset,
+	onDrag: UseDragListener,
+	onDrop: UseDragListener
+}) => {
+	const [actives, setActives] = useState<number[]>([])
+	const ref = useRef<HTMLUListElement>(null)
+
+	const onClick = curry((index: number, e: PointerEvent | MouseEvent) => {
+		const ctrl = e.ctrlKey
+		const shift = e.shiftKey
+
+		e.stopPropagation()
+
+		setActives(actives => {
+			const ascending = (numbers: number[]) => numbers.toSorted((a, b) => a - b)
+			const ranges = (from: number, to: number, acc: number[]): number[] =>
+				(to - from) <= 0
+					? ([...acc, from])
+					: ranges(from + 1, to, [...acc, from])
+
+			const shiftFn = (number: number, numbers: number[]): number[] => {
+				const sorted = ascending([...numbers, number])
+				const from = sorted[0]
+				const to = sorted[sorted.length - 1]
+				return ranges(from, to, [])
+			}
+
+			const ctrlFn = (number: number, numbers: number[]): number[] =>
+				ascending([...numbers, number]).reduce((a, b) => {
+					if(a.includes(b)) {
+						return a.filter(v => v !== b)
+					} else {
+						return a.concat([b])
+					}
+				}, [] as number[])
+
+			const clickFn = (number: number): number[] => ([number])
+
+			const table: [boolean, (number: number, numbers: number[]) => number[]][] = [
+				[shift, shiftFn],
+				[ctrl, ctrlFn],
+				[!(ctrl || shift), clickFn]
+			]
+
+			const result: number[] = table.reduce((a, [v, fn]) => {
+				if(v) {
+					return fn(index, a)
+				} else {
+					return a
+				}
+			}, actives)
+
+			return result
+		})
+	})
+
+	const onContextMenu = curry((index: number, _event: PointerEvent | MouseEvent) => {
+		setActives([index])
+	})
+
+	const items = Object.values(asset)
+
+	useEffect(() => {
+		const listener = (e: { key: string }) => {
+			if(e.key === 'Delete') {
+				const items = [...ref.current!.children] as HTMLLIElement[]
+				const actives = items.filter(v => v.dataset.active === 'true').map(v => {
+					return {
+						id: v.dataset.id || '',
+						src: v.dataset.src || '',
+						alt: v.dataset.alt || '',
+						width: Number(v.dataset.width),
+						height: Number(v.dataset.height),
+						thumbnail: v.dataset.thumbnail === 'true'
+					}
+				})
+
+				if(actives.length > 0) {
+					onDelete(actives)
+				}
+			}
+		}
+
+		document.addEventListener('keydown', listener)
+
+		return () => { document.removeEventListener('keydown', listener) }
+	}, [])
+
+	useEffect(() => () => setActives([]), [items.length])
+
+	type DragEvent = { x: number, y: number, dx: number, dy: number, subject: { x: number, y: number } }
+
+	const Group = ({ x0, y0, x1, y1, onDragStart, onDrag, onDragEnd, onClick }: {
+		onDragStart: (e: DragEvent) => void,
+		onDrag: (e: DragEvent) => void,
+		onDragEnd: (e: DragEvent) => void,
+		onClick: (e: PointerEvent | MouseEvent) => void,
+		x0: number,
+		y0: number,
+		x1: number,
+		y1: number
+	}) => {
+		const ref = useDrag<HTMLDivElement>({
+			modifier: drag => drag.clickDistance(1).filter(e =>
+				!e.ctrlKey && !e.shiftKey && !e.button
+			),
+			onDragStart: e => onDragStart(e),
+			onDrag: e => onDrag(e),
+			onDragEnd: e => onDragEnd(e)
+		})
+		return <div
+			ref={ref}
+			onClick={onClick}
+			className='absolute top-0 left-0'
+			style={{
+				transform: `translate(${x0}px, ${y0}px)`,
+				width: (x1 - x0) + 'px',
+				height: (y1 - y0) + 'px'
+			}}
+		/>
+	}
+
+	const Item = ({ index, active, item, onDragStart, onDrag, onDragEnd, onClick }: {
+		index: number,
+		active: boolean,
+		item: Photo,
+		onDragStart: (e: DragEvent) => void,
+		onDrag: (e: DragEvent) => void,
+		onDragEnd: (e: DragEvent) => void,
+		onClick: (e: PointerEvent | MouseEvent) => void
+	}) => {
+		const ref = useDrag<HTMLLIElement>({
+			modifier: drag => drag.clickDistance(1).filter(e =>
+				!e.ctrlKey && !e.shiftKey && !e.button
+			),
+			onDragStart: e => onDragStart(e),
+			onDrag: e => onDrag(e),
+			onDragEnd: e => onDragEnd(e)
+		})
+
+		return (
+			<li
+				ref={ref}
+				className='w-full h-auto data-[active=true]:outline-2 data-[active=true]:outline-blue-500'
+				onClick={onClick}
+				onContextMenu={onContextMenu}
+				data-active={active}
+				data-index={index}
+				data-id={item.id}
+				data-src={item.src}
+				data-alt={item.alt}
+				data-width={item.width}
+				data-height={item.height}
+				data-thumbnail={item.thumbnail}
+			>
+				<img
+					className='object-cover object-center w-full h-40 select-none'
+					width={item.width}
+					height={item.height}
+					alt={`${item.alt} Designed By ${siteName}`}
+					src={item.src}
+				/>
+			</li>
+		)
+	}
+
+	const getItems = () => {
+		const items = [...ref.current!.children].filter(v => {
+			const el = v as HTMLLIElement
+			return el.dataset.active === 'true'
+		})
+
+		return items.map(v => {
+			const { dataset } = v as HTMLLIElement
+			return {
+				id: dataset.id,
+				src: dataset.src,
+				alt: dataset.alt,
+				width: Number(dataset.width),
+				height: Number(dataset.height),
+				thumbnail: dataset.thumbnail === 'true'
+			}
+		})
+	}
+
+	const onGroupDragStart = () => { }
+
+	const onGroupDrag = (event: DragEvent) =>
+		onDrag({
+			x: event.x,
+			y: event.y,
+			items: getItems()
+		})
+
+	const onGroupDragEnd = (event: DragEvent) => {
+		const moved = event.x - event.subject.x || event.y - event.subject.y
+		if(moved) {
+			onDrop({
+				x: event.x,
+				y: event.y,
+				items: getItems()
+			})
+		}
+	}
+
+	const onGroupClick = (event: MouseEvent | PointerEvent) => {
+		const [item] = [...ref.current!.children].filter(v => {
+			const r = v.getBoundingClientRect()
+			const xs = between(r.x, r.x + r.width, event.clientX)
+			const ys = between(r.y, r.y + r.height, event.clientY)
+			return xs && ys
+		})
+
+		const el = item as HTMLLIElement
+		const index = Number(el.dataset.index)
+
+		onClick(index, event)
+	}
+
+	const onItemDragStart = curry((index: number, _event: DragEvent) => {
+		setActives([index])
+	})
+
+	const onItemDrag = curry((_index: number, event: DragEvent) =>
+		onDrag({
+			x: event.x,
+			y: event.y,
+			items: getItems()
+		})
+	)
+
+	const onItemDragEnd = curry((index: number, event: DragEvent) => {
+		const moved = event.x - event.subject.x || event.y - event.subject.y
+		if(moved) {
+			onDrop({
+				x: event.x,
+				y: event.y,
+				items: getItems()
+			})
+		}
+	})
+
+	const calcGroupRect = (actives: number[]) =>
+		actives.reduce(
+			(acc, index) => {
+				const r = [...ref.current!.children][index].getBoundingClientRect()
+				return {
+					x0: Math.min(r.x, acc.x0),
+					y0: Math.min(r.y, acc.y0),
+					x1: Math.max(r.x + r.width, acc.x1 - acc.x0),
+					y1: Math.max(r.y + r.height, acc.y1 - acc.y0)
+				}
+			},
+			{ x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
+		)
+
+	const onClear = () => setActives([])
+
+	return (
+		<div
+			onClick={onClear}
+			className='size-full relative flex flex-col items-center'
+		>
+			{
+				<ul
+					ref={ref}
+					className={clsx('size-full p-4 flex flex-col items-center gap-y-4 overflow-y-auto', { 'hidden': items.length === 0 })}
+				>
+					{
+						items.map((item, i) =>
+							<Item
+								key={item.id}
+								index={i}
+								item={item}
+								active={actives.includes(i)}
+								onDragStart={onItemDragStart(i)}
+								onDrag={onItemDrag(i)}
+								onDragEnd={onItemDragEnd(i)}
+								onClick={onClick(i)}
+							/>
+						)
+					}
+					<style jsx>
+						{`ul { scrollbar-width: thin; }`}
+					</style>
+				</ul>
+			}
+			{
+				actives.length > 1
+					? <Group
+						onClick={onGroupClick}
+						onDragStart={onGroupDragStart}
+						onDrag={onGroupDrag}
+						onDragEnd={onGroupDragEnd}
+						{...calcGroupRect(actives)}
+					/>
+					: null
+			}
+			{
+				items.length === 0
+					? <div className='size-full p-4 flex flex-col justify-center items-center'>
+						<p className='font-sans opacity-50 uppercase text-base font-medium'>No images</p>
+					</div>
+					: null
+			}
+		</div>
+	)
+}
+
+const Overlay = ({ x, y, items }: { x: number, y: number, items: Photos }) => {
+	const initialSize = 80
+	const offset = .1
+	const size = items.reduce(a => a + (offset * initialSize), -offset * initialSize) + initialSize
+	return (
+		<div className='z-50 fixed inset-0'>
+			<div className='relative size-full'>
+				<div
+					style={{ translate: `calc(${x}px - 50%) calc(${y}px - 50%)` }}
+					className='absolute top-0 left-0 cursor-move bg-neutral-300/50'
+				>
+					<div className='relative size-full p-2'>
+						<ul style={{ width: size + 'px', height: size + 'px' }} className='relative opacity-80'>
+							{
+								items.map((v, i) =>
+									<li
+										key={v.id}
+										style={{ translate: `${i * (initialSize * offset)}px ${i * (initialSize * offset)}px` }}
+										className='absolute top-0 left-0 size-20'
+									>
+										<img
+											className='size-full object-cover object-center'
+											src={v.src}
+											alt={v.alt}
+											width={v.width}
+											height={v.height}
+										/>
+									</li>
+								)
+							}
+						</ul>
+						<span className='absolute top-0 right-0 translate-x-1/2 -translate-y-1/2 size-5 rounded-full bg-blue-500 flex flex-col justify-center items-center text-center'>
+							<small className='font-bold text-tiny text-light'>{items.length > 100 ? '...' : items.length}</small>
+						</span>
+					</div>
+				</div>
+			</div>
+		</div >
+	)
+}
+
+const Edit = ({ project }: { project: Project }) => {
+	const [previous, setPrevious] = useState<Partial<Project>>(() => {
+		return {
+			assets: project.assets,
+			template: project.template,
+			name: project.name,
+			location: project.location,
+			story: project.story,
+			tagline: project.tagline,
+			slug: project.slug,
+			title: project.title,
+			description: project.description,
+			featured: project.featured,
+			published: project.published,
+			category: project.category
+		}
+	})
+
+	const [assets, setAssets] = useState(project.assets)
+	const [template, setTemplate] = useState(project.template)
+	const [name, setName] = useState(project.name)
+	const [location, setLocation] = useState(project.location)
+	const [story, setStory] = useState(project.story)
+	const [tagline, setTagline] = useState(project.tagline)
+	const [slug, setSlug] = useState(project.slug)
+	const [title, setTitle] = useState(project.title)
+	const [description, setDescription] = useState(project.description)
+	const [featured, setFeatured] = useState(project.featured)
+	const [published, setPublished] = useState(project.published)
+	const [category, setCategory] = useState(project.category)
+
+	const [errors, setErrors] = useState<string[]>([])
+
+	const sensorRef = useRef<HTMLDivElement>(null!)
+
+	const [over, setOver] = useState(false)
+
+	const [uploadQueues, setUploadQueues] = useState<number[]>([])
+	const [overlay, setOverlay] = useState<{ x: number, y: number, items: Photos }>({ x: 0, y: 0, items: [] })
+	const [menu, setMenu] = useState(false)
+	const [bucket, setBucket] = useState(false)
+	const [breakpoint, setBreakpoint] = useState<Device>('tablet')
+	const [controllers, setControllers] = useState<AbortController[]>([])
+	const [broadcast, setBroadcast] = useState<BroadcastChannel | null>(null)
+
+	const [multisteps, setMultisteps] = useState<Multisteps>({
+		open: false,
+		input: '',
+		images: [],
+	})
+
+	const [alert, setAlert] = useState({
+		open: false,
+		title: '',
+		description: '',
+		cancel: { text: '', color: '', callback: () => { } },
+		action: { text: '', color: '', callback: () => { } },
+	})
+
+	const [toast, setToast] = useState<StatusType>({
+		open: false,
+		title: '',
+		description: null
+	})
+
+	const router = useRouter()
+
+	const current: Partial<Project> = {
+		assets: assets,
+		template: template,
+		name: name,
+		location: location,
+		story: story,
+		tagline: tagline,
+		slug: slug,
+		title: title,
+		description: description,
+		featured: featured,
+		published: published,
+		category: category
+	}
+
+	const showSuccessToast = ({ title, description }: { title: string, description: string | React.ReactNode }) =>
+		setToast({
+			open: true,
+			title: title,
+			description: (
+				<>
+					<span>{<CheckCircledIcon className='text-green-500' />}</span>
+					<span>{description}</span>
+				</>
+			)
+		})
+
+	const showErrorToast = ({ title, description }: { title: string, description: string | React.ReactNode }) =>
+		setToast({
+			open: true,
+			title: title,
+			description: (
+				<>
+					<span>{<CrossCircledIcon className='text-red-500' />}</span>
+					<span>{description}</span>
+				</>
+			)
+		})
+
+	const showInfoToast = ({ title, description }: { title: string, description: string | React.ReactNode }) =>
+		setToast({
+			open: true,
+			title: title,
+			description: (
+				<>
+					<span>{<InfoCircledIcon className='text-yellow-500' />}</span>
+					<span>{description}</span>
+				</>
+			)
+		})
+
+	const uploadAssets = (files: File[]) =>
+		compressFromFiles(files).then(
+			blobs => filesToPhotos(blobs).then(
+				(imgs) => {
+					const uploads: [string, Blob][] = imgs.map((img, i) => {
+						return [project.id + '/' + img.id + '.jpeg', blobs[i]]
+					})
+					const controller = new AbortController()
+					const time = Date.now()
+
+					setControllers(prev =>
+						prev.concat([controller])
+					)
+					setAssets(prev =>
+						prev.concat(imgs)
+					)
+					setUploadQueues(v =>
+						v.concat([time])
+					)
+					setBucket(false)
+					setMultisteps({ open: true, images: imgs, input: '' })
+
+					return uploadFiles(bucketName, uploads, controller.signal).then(
+						() => setUploadQueues(v =>
+							v.filter(v => v !== time)
+						),
+						() => showErrorToast({
+							title: 'Storage error',
+							description: 'Error when uploading image files.'
+						})
+					)
+				}
+			),
+			() => showErrorToast({
+				title: 'Image error',
+				description: 'Error when loading image files.'
+			})
+		)
+
+	const deleteAssets = async (deletes: Photo[]) => {
+		const ids = deletes.map(v => v.id)
+		const paths = formatAssets(project.id, deletes).map(v => v.src)
+
+		setAssets(assets =>
+			assets.filter(v =>
+				!ids.includes(v.id)
+			)
+		)
+
+		setTemplate(template =>
+			Object.entries(template).reduce((a, [key, value]) => {
+				const items = value.items.filter(v =>
+					!ids.includes(v.src)
+				)
+				const height = items.length === 0 ? 0 : value.height
+				return { ...a, [key]: { ...value, items, height } }
+			}, {}) as Template
+		)
+
+		return deleteFiles(bucketName, paths).catch(() =>
+			showErrorToast({
+				title: 'Storage error',
+				description: 'Error when deleting image files.'
+			})
+		)
+	}
+
+	const updateLayout = (fn: (layout: Layout) => Layout) =>
+		setTemplate((template: Template) => {
+			const result = fn(template[breakpoint])
+			const current = { ...result, edited: true }
+			const hr = current.height / getItemsHeight(current.items)
+			return Object.entries(template)
+				.filter(([key]) => key !== breakpoint)
+				.reduce((acc, [key, value]) => {
+					if(value.edited) {
+						return { ...acc, [key]: value }
+					} else {
+						const wr = value.width / current.width
+						const items = current.items.map(item => {
+							const box = {
+								x: item.x * wr,
+								y: item.y * wr,
+								w: item.w * wr,
+								h: item.h * wr
+							}
+							return { ...item, ...box }
+						})
+						const height = getItemsHeight(items) * hr
+						return { ...acc, [key]: { ...value, items, height } }
+					}
+				}, { [breakpoint]: current }) as Template
+		})
+
+	const onBack = async () => {
+		const change = changes(previous, current)
+		const back = () => {
+			assets.filter(v =>
+				v.src.startsWith('blob')
+			).forEach(v =>
+				URL.revokeObjectURL(v.src)
+			)
+			broadcast?.close()
+			setPrevious(prev => {
+				return { ...prev, ...change }
+			})
+			router.push('/dashboard/projects')
+		}
+
+		if(Object.keys(change).length > 0) {
+			const update = formatChanges(project.id, change)
+			const exit = () => updateProject(update).then(
+				() => {
+					rebuildPath('/', 'layout')
+					back()
+				},
+				back
+			)
+			if(uploadQueues.length > 0) {
+				setAlert({
+					open: true,
+					title: 'Upload in progress',
+					description: 'Upload is incomplete. Do you still want to cancel?',
+					action: {
+						text: 'Yes',
+						color: '',
+						callback: () => {
+							controllers.forEach(controller =>
+								controller.abort()
+							)
+							return exit()
+						}
+					},
+					cancel: {
+						text: 'No',
+						color: '',
+						callback: () => { }
+					},
+				})
+			} else {
+				return exit()
+			}
+		} else {
+			back()
+		}
+	}
+
+	const onUnpublish = async () => {
+		const change = changes(previous, { ...current, published: false })
+		const task = Object.keys(change).length > 0
+			? () => updateProject(
+				formatChanges(project.id, change)
+			).then(() => {
+				setPrevious(v => {
+					return { ...v, ...change }
+				})
+				rebuildPath('/', 'layout')
+			})
+			: () => Promise.resolve()
+
+		setPublished(false)
+
+		return task().then(
+			() => showSuccessToast({
+				title: 'Success',
+				description: 'Project has been unpublished.'
+			}),
+			() => showErrorToast({
+				title: 'Database error',
+				description: 'Error when unpublishing project.'
+			})
+		)
+	}
+
+	const onPublish = async () => {
+		type StringKeysOf<T> = {
+			[K in keyof T]: T[K] extends string ? K : never
+		}[keyof T]
+		const fields: StringKeysOf<Project>[] = [
+			'name',
+			'location',
+			'story',
+			'tagline',
+			'slug',
+			'title',
+			'description',
+			'slug',
+			'title',
+			'description'
+		]
+		const missings = fields.filter(v => (current[v] as string).trim() === '')
+		if(missings.length > 0) {
+			const keys: StringKeysOf<Project>[] = ['slug', 'title', 'description']
+			setErrors(missings)
+			setMenu(
+				keys.some(v =>
+					missings.includes(v)
+				)
+			)
+			showErrorToast({
+				title: 'Missing fields.',
+				description: 'Fields cannot be empty.'
+			})
+		} else if(Object.values(template).some(layout => layout.items.length === 0)) {
+			setErrors([])
+			showErrorToast({
+				title: 'Insufficient number of images.',
+				description: 'In order to publish, project require at least one image on each viewport.'
+			})
+		} else {
+			const changed: Partial<Project> = changes(previous, { ...current, published: true })
+			const entries: [string, Project[keyof Project]][] = Object.entries(changed)
+
+			const change = entries.reduce(
+				(a, [k, v]) => ({
+					...a,
+					[k]: fields.includes(k as StringKeysOf<Project>)
+						? (v as string).trim()
+						: v
+				}),
+				{}
+			)
+
+			const task = Object.keys(change).length > 0
+				? () => updateProject(
+					formatChanges(project.id, {
+						...change,
+						published_at: new Date().toISOString()
+					})
+				).then(() => {
+					setPrevious(prev => {
+						return { ...prev, ...change }
+					})
+					rebuildPath('/', 'layout')
+				})
+				: () => Promise.resolve()
+
+			setPublished(true)
+			setErrors([])
+
+			return task().then(
+				() => showSuccessToast({
+					title: 'Success',
+					description: 'Project has been published.'
+				}),
+				() => showErrorToast({
+					title: 'Database error',
+					description: 'Error when publishing project.'
+				})
+			)
+		}
+	}
+
+	const onDelete = () => setAlert({
+		open: true,
+		title: 'Delete project',
+		description: 'This will permanently delete project data.',
+		cancel: {
+			text: 'Cancel',
+			color: '',
+			callback: () => { }
+		},
+		action: {
+			text: 'Delete',
+			color: 'text-red-500',
+			callback: () =>
+				deleteFiles( // confirm this in the ui
+					bucketName,
+					formatAssets(project.id, assets).map(v => v.src)
+				).then(() =>
+					deleteProject(project.id)
+				).then(
+					() => {
+						assets.filter(v =>
+							v.src.startsWith('blob')
+						).forEach(v =>
+							URL.revokeObjectURL(v.src)
+						)
+						rebuildPath('/', 'layout')
+						router.push('/dashboard/projects')
+					},
+					() => showErrorToast({
+						title: 'Database error',
+						description: 'Error when deleting project.'
+					})
+				)
+		}
+	})
+
+	const onPreview = async () => {
+		const change = changes(previous, current)
+		const task = Object.keys(change).length > 0
+			? updateProject(
+				formatChanges(project.id, change)
+			).then(() => {
+				setPrevious(prev => {
+					return { ...prev, ...change }
+				})
+				rebuildPath('/', 'layout')
+			})
+			: Promise.resolve()
+
+		const broadcaster = broadcast ?? new BroadcastChannel(project.id)
+
+		setBroadcast(broadcaster)
+
+		const attachListener = () =>
+			broadcaster.addEventListener(
+				'message',
+				() => broadcaster.postMessage(current),
+				{ once: true }
+			)
+
+		return task.then(
+			() => {
+				const tab = window.open('/preview/' + project.id, project.id)
+				if(tab) {
+					attachListener()
+				} else {
+					attachListener()
+					showInfoToast({
+						title: 'Preview error',
+						description: (
+							<>Unable to open preview. <a href={'/preview/' + project.id} target='_blank'>Click here</a> to open preview manually.</>
+						)
+					})
+				}
+			},
+			() => showErrorToast({
+				title: 'Database error',
+				description: 'Error when updating project.'
+			})
+		)
+	}
+
+	const updateAsset = (fn: (asset: Asset) => Asset) =>
+		setAssets(assets => {
+			const left = Object.fromEntries(
+				assets.map(v => {
+					return [v.id, v]
+				})
+			)
+			const right = fn(left)
+			return Object.values({ ...left, ...right })
+		})
+
+	useEffect(() => () => {
+		controllers.forEach(controller =>
+			controller.abort()
+		)
+		broadcast?.close()
+	}, [])
+
+	useEffect(() => {
+		const change = changes(previous, current)
+		const changed = Object.keys(change).length > 0
+		if(changed) {
+			const timeouts = [
+				setTimeout(() => {
+					updateProject(
+						formatChanges(project.id, change)
+					).then(
+						() => {
+							setPrevious(prev => {
+								return { ...prev, ...change }
+							})
+							rebuildPath('/', 'layout')
+						},
+						() => showErrorToast({
+							title: 'Database error',
+							description: 'Error when saving project.'
+						})
+					)
+				}, 3000),
+				setTimeout(() => broadcast?.postMessage(current), 1500)
+			]
+
+			return () => { timeouts.forEach(clearTimeout) }
+		}
+	}, [
+		featured,
+		category,
+		published,
+		name,
+		location,
+		story,
+		tagline,
+		slug,
+		title,
+		description,
+		template,
+		assets
+	])
+
+	const splitAsset = (items: Items, assets: Photos) =>
+		assets.reduce((a, b) => {
+			if(items.some(v => v.src === b.id)) {
+				return { ...a, used: { ...a.used, [b.id]: b } }
+			} else {
+				return { ...a, unused: { ...a.unused, [b.id]: b } }
+			}
+		}, { unused: {}, used: {} })
+
+	const layout = template[breakpoint]
+	const { used, unused } = splitAsset(layout.items, assets)
+	const unusedAssets = Object.values(unused)
+
+	const onDrag = (e: { x: number, y: number, items: Photos }) => {
+		const dropable = sensorRef.current
+		const r = dropable.getBoundingClientRect()
+
+		setOver(
+			isInsideBox(
+				{
+					x: r.x,
+					y: r.y,
+					w: r.width,
+					h: r.height
+				},
+				e.x,
+				e.y
+			)
+		)
+		setOverlay(e)
+	}
+
+	const onDrop = (e: { x: number, y: number, items: Photos }) => {
+		const dropable = sensorRef.current
+		const r = dropable.getBoundingClientRect()
+		const inside = isInsideBox(
+			{
+				x: r.x,
+				y: r.y,
+				w: r.width,
+				h: r.height
+			},
+			e.x,
+			e.y
+		)
+
+		if(inside) {
+			setOver(false)
+			updateLayout(layout => {
+				const items = layout.items.concat(
+					e.items.map((image, i) => {
+						const size = layout.width / 3
+						const scaled = Math.min(image.width / size, image.height / size) * size
+						const offset = .05 * size * i
+						const result = applyBoxConstrain(
+							{ x: 0, y: 0, w: layout.width, h: Infinity },
+							{
+								id: UUIDv7(),
+								src: image.id,
+								z: 0,
+								x: (e.x - r.x) - (size * .5) + offset,
+								y: (e.y - r.y) - (size * .5) + offset,
+								w: size,
+								h: size,
+								sx: ((image.width - scaled) * .5) / image.width,
+								sy: ((image.height - scaled) * .5) / image.height,
+								sw: scaled / image.width,
+								sh: scaled / image.height,
+								effect: ''
+							}
+						)
+						return result
+					})
+				)
+				const height = Math.max(getItemsHeight(items), layout.height)
+
+				return { ...layout, items, height }
+			})
+			setOverlay({ x: 0, y: 0, items: [] })
+		} else {
+			setOverlay({ x: 0, y: 0, items: [] })
+		}
+	}
+
+	const onSkip = () => {
+		setBucket(true)
+		setMultisteps({ images: [], open: false, input: '' })
+	}
+
+	const onNext = () => {
+		const [x, ...xs] = multisteps.images
+
+		updateAsset(asset => {
+			return {
+				...asset,
+				[x.id]: {
+					...x,
+					alt: alternative(multisteps.input)
+				}
+			}
+		})
+		setMultisteps({
+			open: xs.length > 0,
+			input: '',
+			images: xs
+		})
+		setBucket(xs.length === 0)
+	}
+
+	const onClear = () => {
+		setMenu(false)
+		setBucket(false)
+	}
+
+	const onAutoFormat = () => updateLayout(autoFormat)
+
+	const emptyLayout = layout.items.length === 0
+	const hasImages = assets.length > 0
+
+	return (
+		<>
+			<section
+				className='min-h-dvh size-full grid grid-rows-[auto_1fr_auto] place-items-center px-10'
+				onClick={onClear}
+				onContextMenu={onClear}
+			>
+				<MainHeader
+					onBack={onBack}
+					content={hasImages}
+					menu={menu}
+					setMenu={setMenu}
+					breakpoint={breakpoint}
+					setBreakpoint={setBreakpoint}
+				/>
+				{
+					hasImages
+						? <Droppable
+							className='size-full'
+							noClick={true}
+							onDrop={uploadAssets}
+						>
+							<article className='flex flex-col items-center size-full py-10 gap-y-30 overflow-clip'>
+								<MainEditorHeader
+									errors={errors}
+									name={name}
+									setName={setName}
+									location={location}
+									setLocation={setLocation}
+									tagline={tagline}
+									setTagline={setTagline}
+									story={story}
+									setStory={setStory}
+								/>
+								<div className='relative size-full'>
+									<MainEditorBody
+										key={layout.width}
+										asset={used}
+										setAsset={updateAsset}
+										layout={layout}
+										setLayout={updateLayout}
+									/>
+									<Sensor ref={sensorRef} active={over} style={{ width: layout.width + 'px', height: '100%' }} />
+								</div>
+							</article >
+						</Droppable>
+						: <MainUpload uploadAssets={uploadAssets} />
+				}
+				{
+					hasImages
+						? <div className='sticky bottom-0 left-0 right-0 size-full flex justify-center items-center min-h-20 z-50 pointer-events-none'>
+							<ul className='pointer-events-auto flex justify-center items-center rounded-md p-1 bg-light dark:bg-dark outline-1 outline-neutral-200 *:size-full gap-x-5 *:*:flex *:*:justify-center *:*:items-center *:*:p-2 *:*:rounded-md'>
+								{
+									[
+										<Bucket
+											key={'bucket'}
+											active={bucket}
+											count={unusedAssets.length}
+											onClick={e => {
+												e.stopPropagation()
+												setBucket(!bucket)
+											}}
+										/>,
+										<AutoFormat
+											key={'autoformat'}
+											disabled={emptyLayout}
+											onClick={onAutoFormat}
+										/>,
+										<Reset
+											key={'reset'}
+											disabled={emptyLayout}
+											options={
+												breakpoints.map(screen => {
+													return [
+														screen === breakpoint,
+														screen,
+														() => updateLayout(layout => {
+															const base = template[screen as keyof Template]
+															const wr = layout.width / base.width
+															const hr = base.height / getItemsHeight(base.items)
+															const items = base.items.map(item => {
+																const box = {
+																	x: item.x * wr,
+																	y: item.y * wr,
+																	w: item.w * wr,
+																	h: item.h * wr
+																}
+																return { ...item, ...box }
+															})
+															const height = getItemsHeight(items) * hr
+
+															return { ...layout, items, height }
+														})
+													]
+												})
+											}
+										/>
+									].map((v, i) =>
+										<li
+											key={i}
+											className='*:cursor-pointer *:disabled:cursor-not-allowed *:hover:not-disabled:text-amber-600'
+										>
+											{v}
+										</li>
+									)
+								}
+							</ul>
+						</div>
+						: null
+				}
+			</section>
+			{
+				bucket && hasImages
+					? <section className='z-50 fixed top-0 left-0 w-xs h-dvh outline-1 outline-neutral-200 shadow-lg bg-light dark:bg-dark'>
+						<Left
+							key={layout.width + unusedAssets.length}
+							asset={unused}
+							onDrag={onDrag}
+							onDrop={onDrop}
+							onDelete={deleteAssets}
+						/>
+					</section>
+					: null
+			}
+			{
+				menu && hasImages
+					? <section className='z-50 fixed right-0 top-0 bottom-0 px-10 w-md grid grid-rows-[auto_max-content_1fr] gap-y-5 place-items-center outline-1 outline-neutral-200 shadow-lg bg-light dark:bg-dark'>
+						<RightHeader
+							published={published}
+							onPublish={onPublish}
+							onUnpublish={onUnpublish}
+							onPreview={onPreview}
+							menu={menu}
+							setMenu={setMenu}
+						/>
+						<RightMain
+							errors={errors}
+							category={category}
+							setCategory={setCategory}
+							slug={slug}
+							setSlug={setSlug}
+							title={title}
+							setTitle={setTitle}
+							description={description}
+							setDescription={setDescription}
+							featured={featured}
+							setFeatured={setFeatured}
+						/>
+						<RightFooter onDelete={onDelete} />
+					</section>
+					: null
+			}
+			{overlay.items.length > 0 ? <Overlay {...overlay} /> : null}
+			<Status
+				status={toast}
+				setStatus={setToast}
+			/>
+			<Alert
+				alert={alert}
+				setAlert={setAlert}
+			/>
+			<Multisteps
+				multisteps={multisteps}
+				setMultisteps={setMultisteps}
+				onSkip={onSkip}
+				onNext={onNext}
+			/>
+		</>
+	)
+}
+
+export default Edit
