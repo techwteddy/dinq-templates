@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Contact Us</title>
+    <!-- Favicon -->
+     <link rel="shortcut icon" href="./assets/Images/logo-light.png" type="image/x-icon">
+
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.10.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.4.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <!-- Google Web Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+   <!-- CSS links --> 
+    <link rel="stylesheet" href="./assets/CSS/style.css">
+
+    <!-- Email JS links -->
+    <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
+    <script type="text/javascript" src="./assets/JS/validation.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js" ></script>
+    <script type="text/javascript">
+      (function () {
+        emailjs.init("U-fwyVn4CEKmHr4LM");
+      })();
+    </script>
+</head>
+<body>
+    <header class="header" id="header">
+        <nav class="nav container">
+            <a href="#" class="nav__logo">
+                <img src="./assets/Images/logo-light.png" alt="">SOHAM
+            </a>
+    
+            <div class="nav__menu" id="nav-menu">
+                <ul class="nav__list">
+                    <li class="nav__item">
+                        <a class='nav__link' href='/'>Home</a>
+                    </li>
+                    <li class="nav__item">
+                        <a href="#" class="nav__link">About <i class="ri-arrow-down-s-fill"></i></a>
+                        <ul class="dropdown">
+                            <li><a href='./about.html#about'>Who are we?</a></li>
+                            <li><a href='./about.html#mission'>Mission</a></li>
+                            <li><a href='./about.html#values'>Core Values</a></li>
+                        </ul>
+                    </li>
+                    <li class="nav__item">
+                        <a class='nav__link' href='./program.html'>Programs</a>
+                    </li>
+                    <li class="nav__item">
+                        <a href="./getinvolve.html" class="nav__link active-link">Get Involve</a>
+                    </li>
+                    <li class="nav__item">
+                        <a href="https://www.iatspayments.com//IATS/AURAPreview.aspx?PaymentboxID=PA543EE1799F20871D" class="nav__link donate__link">Donate</a>
+                    </li>
+                </ul>
+
+                <div class="nav__close" id="nav-close">
+                    <i class="ri-close-line"></i>
+                </div>
+            </div>
+    
+            <div class="nav__toggle" id="nav-toggle">
+                <i class="ri-menu-line"></i>
+            </div>
+        </nav>
+    </header>
+
+    <main class="main">
+
+        <div class="container-fluid page-header mb-5 wow fadeIn" data-wow-delay="0.1s">
+            <div class="container text-center">
+                <h1 class="display-4 text-white animated slideInDown mb-4">Get Involve</h1>
+            </div>
+        </div>
+
+        <section class="section_contactCard section">
+            <div class="features-container">
+            <!-- Feature 1 -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <img src="./assets/Images/destination.png" alt="take a short trip">
+                    </div>
+                    <div class="feature-content">
+                        <h3 class="feature-title">Take a Short Trip</h3>
+                        <p class="feature-description">
+                            As an individual(s), an organization(s), or a church(es) you may join Smile of hope africa ministries to fulfil the great commission by having a short mission trip to uganda and be part God’s transforming work.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <img src="./assets/Images/hands.png" alt="Support">
+                    </div>
+                    <div class="feature-content">
+                        <h3 class="feature-title">Support a Mission</h3>
+                        <p class="feature-description">
+                            Lorem ipsum dolor, sit amet consectetur adipisicing elit. Ipsam at iusto recusandae quam magnam sunt distinctio ad, aut illo impedit, tenetur doloremque doloribus amet mollitia illum aliquid beatae. Hic, id!
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <img src="./assets/Images/contact-information.png" alt="Contact Us">
+                    </div>
+                    <div class="feature-content">
+                        <h3 class="feature-title">Get in Touch With Us</h3>
+                        <p class="feature-description">
+                            Lorem ipsum dolor sit, amet consectetur adipisicing elit. Nobis sint, magni distinctio nam hic maxime beatae sequi rem vitae nihil cupiditate blanditiis repudiandae porro libero quas praesentium, mollitia voluptatem quo.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section contact-section" id="contact">
+            <div class="container contact-container">
+                <div class="contact-form-box" method="POST">
+                    <h2 class="contact-title">Get in Touch</h2>
+                    <div class="contact-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="firstName">First Name</label>
+                                <input type="text" id="firstName" name="firstName" required placeholder="Your first name" autocomplete="given-name" />
+                            </div>
+                            <div class="form-group">
+                                <label for="lastName">Last Name</label>
+                                <input type="text" id="lastName" name="lastName" required placeholder="Your last name" autocomplete="family-name" />
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="country">Country</label>
+                                <input type="text" id="country" name="country" required placeholder="Your country" autocomplete="country-name" />
+                            </div>
+                            <div class="form-group">
+                                <label for="phone">Phone Number</label>
+                                <input type="tel" id="phone" name="phone" required placeholder="e.g. +256 700 000000" autocomplete="tel"  />
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="email">Email Address</label>
+                                <input type="email" id="email" name="email" required placeholder="you@example.com" autocomplete="email" />
+                            </div>
+                            <div class="form-group">
+                                <label for="subject">Subject</label>
+                                <select id="subject" name="subject" required>
+                                <option value="" disabled selected>Select a reason</option>
+                                <option value="take-trip">Take a Short Trip</option>
+                                <option value="contact-us">Contact Us</option>
+                                <option value="support-mission">Support a Mission</option>
+                                <option value="other">Other Reason</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="message">Your Message</label>
+                            <textarea id="message" name="message" rows="4" required placeholder="Type your message here..."></textarea>
+                        </div>
+                    
+                            <div class="h-captcha" data-sitekey="2a2a8eec-6942-436a-a1e2-f7b24d184502"></div>
+                            
+                        
+                        <button type="submit" class="btn btn-primary" onclick="sendMail()">Send Message</button>
+                    </div>
+                    </div>
+                    <div class="contact-map-box">
+                    <h3 class="map-title">Our Location</h3>
+                    <div class="map-responsive">
+                        <iframe 
+                        src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d15955.25559591352!2d32.5825192!3d0.3475967!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x177dbb3d8b9e1e0b%3A0x6f2b3e8a6c1c3f0d!2sKampala%2C%20Uganda!5e0!3m2!1sen!2sug!4v1719234567890!5m2!1sen!2sug" 
+                        width="100%" 
+                        height="300" 
+                        style="border:0; border-radius: 12px;" 
+                        allowfullscreen="" 
+                        loading="lazy" 
+                        referrerpolicy="no-referrer-when-downgrade"
+                        title="Map showing location in Kampala, Uganda">
+                        </iframe>
+                    </div>
+                    <p class="map-address">
+                        <i class="ri-map-pin-2-fill" aria-hidden="true"></i> Kampala, Uganda
+                    </p>
+
+                    <div class="Contact_socials">
+                        <div class="contact_socials-box">
+                            <div class="contact_socials-info">
+                                <i class="ri-phone-fill socials-icon"></i>
+                                <div class="">
+                                    <div class="h3 contact_socials-title">Call Us</div>
+                                    <p class="contact_socials-description">+256 700 000000</p>
+                                </div>
+                            </div>
+
+                            <button class="button contact_socials-button">
+                                Call Now
+                            </button>
+                        </div>
+
+                        <div class="contact_socials-box">
+                            <div class="contact_socials-info">
+                                <i class="ri-whatsapp-fill socials-icon"></i>
+                                <div class="">
+                                    <div class="h3 contact_socials-title">Chat Now</div>
+                                    <p class="contact_socials-description">+256 700 000000</p>
+                                </div>
+                            </div>
+
+                            <button class="button contact_socials-button">
+                                Call Now
+                            </button>
+                        </div>
+
+                        <div class="contact_socials-box">
+                            <div class="contact_socials-info">
+                                <i class="ri-mail-fill socials-icon"></i>
+                                <div class="">
+                                    <div class="h3 contact_socials-title">Mail Now</div>
+                                    <p class="contact_socials-description">exemple@gmail.com</p>
+                                </div>
+                            </div>
+
+                            <button class="button contact_socials-button">
+                                Call Now
+                            </button>
+                        </div>
+                    </div>
+                    
+                    </div>
+            </div>
+        </section>
+
+        
+        <footer class="footer section" id="app">
+            <div class="container footer__container">
+                <div class="footer__data grid">
+                    <div class="logo-info footer-box">
+                        <a href="#" class="nav__logo">
+                            <img src="./assets/Images/logo-light.png" alt=""></i> SOHAM
+                        </a>
+                        <p class="footer__description">
+                            Currently <span>SOHAM</span> operate in different refugee camps in Uganda.
+                        </p>
+                    </div>
+                    <div class="information footer-box">
+                        <h3 class="footer__title">Information</h3>
+                        <ul>
+                            <li><a href="#">FAQ</a></li>
+                            <li><a href="#">Blog</a></li>
+                            <li><a href="#">Support</a></li>
+                        </ul>
+                    </div>
+                    <div class="company footer-box">
+                        <h3 class="footer__title">SOHAM</h3>
+                        <ul>
+                            <li><a href="#">About us</a></li>
+                            <li><a href="#">Contact Us</a></li>
+                            <li><a href="#">Media</a></li>
+                        </ul>
+                    </div>
+                    <div class="socials footer-box">
+                        <h3 class="footer__title">Follow Us On</h3>
+                        <ul>
+                            <li>
+                                <a href="#"><i class="ri-youtube-fill"></i></a>
+                            </li>
+                            <li>
+                                <a href="#"><i class="ri-facebook-fill"></i></a>
+                            </li>
+                            <li>
+                                <a href="#"><i class="ri-instagram-fill"></i></a>
+                            </li>
+                            <li>
+                                <a href="#"><i class="ri-twitter-fill"></i></a>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="copyright">
+                    <div class="footer-line"></div>
+                    <small>&copy; <span id="year">2025</span> SOHAM. All rights reserved</small>
+                </div>
+            </div>
+        </footer>
+    </main>
+    <script src="./assets/JS/main.js"></script>
+  </body>
+</html>
+
+
+
