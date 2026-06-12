@@ -1,0 +1,176 @@
+"use client";
+
+import { motion, AnimatePresence } from "framer-motion";
+import { Mail, Calendar, Star } from "lucide-react";
+import { ColorPicker } from "@/components/color-picker";
+import { Input } from "@/components/ui/input";
+import { AvatarUpload } from "@/components/auth/AvatarUpload";
+import type { UserProfileData } from "./UserProfile";
+import { useTranslation } from "react-i18next";
+import { resolveAvatarUrl } from "@/lib/avatar";
+
+export default function ProfileHero({
+  data,
+  displayData,
+  isEditing,
+  onChange,
+  avatarLetter,
+  onAvatarUpload,
+  googleAvatarUrl,
+  editSessionId,
+}: {
+  data: UserProfileData;
+  displayData: { displayName: string; avatarColor: string; avatarUrl?: string };
+  isEditing: boolean;
+  onChange: (field: "displayName" | "avatarColor", value: string) => void;
+  avatarLetter: string;
+  onAvatarUpload?: (url: string) => void;
+  googleAvatarUrl?: string | null;
+  editSessionId: number;
+}) {
+  const { t } = useTranslation();
+
+  const formatMonthYear = (d: Date | null) =>
+    d ? d.toLocaleString(undefined, { month: "short", year: "numeric" }) : "—";
+
+  return (
+    <motion.div
+      className="relative mb-6"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ type: "spring", stiffness: 800, damping: 25 }}
+    >
+      <div className="glass-panel relative overflow-hidden rounded-3xl">
+      <div className="relative h-48 overflow-hidden">
+        <div
+          className="absolute inset-0"
+          style={{
+            background: `linear-gradient(135deg, ${displayData.avatarColor} 0%, ${displayData.avatarColor}cc 50%, ${displayData.avatarColor}99 100%)`,
+          }}
+        />
+      </div>
+
+      <div className="relative px-6 pb-6">
+        <div className="relative -mt-16 mb-4 flex items-end gap-4">
+          <motion.div
+            className="relative flex h-32 w-32 items-center justify-center overflow-hidden rounded-2xl border-4 border-background shadow-xl"
+            style={{ background: displayData.avatarColor }}
+            whileHover={{ scale: isEditing ? 1.05 : 1.02 }}
+            transition={{ type: "spring", stiffness: 400, damping: 20 }}
+          >
+            {(displayData.avatarUrl ?? data.avatarUrl) ? (
+              <img
+                src={resolveAvatarUrl(displayData.avatarUrl ?? data.avatarUrl) ?? ""}
+                alt={displayData.displayName}
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover absolute inset-0"
+                onError={(e) => {
+                  // Hide the broken image and show the letter fallback
+                  e.currentTarget.style.display = 'none';
+                  const parent = e.currentTarget.parentElement;
+                  if (parent) {
+                    const fallback = parent.querySelector('.avatar-fallback') as HTMLElement;
+                    if (fallback) fallback.style.display = 'flex';
+                  }
+                }}
+              />
+            ) : null}
+            <span
+              className={`text-white text-5xl font-bold avatar-fallback ${(displayData.avatarUrl ?? data.avatarUrl) ? 'hidden' : 'flex'} items-center justify-center w-full h-full`}
+            >
+              {avatarLetter}
+            </span>
+          </motion.div>
+          
+          <AnimatePresence>
+            {isEditing && (
+              <motion.div
+                key="color-picker"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              >
+                <ColorPicker
+                  value={displayData.avatarColor}
+                  onChange={(hex) => onChange("avatarColor", hex)}
+                  label={t("profile.change_color")}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div className="space-y-3">
+          <AnimatePresence mode="wait">
+            {isEditing ? (
+              <motion.div
+                key="edit-name"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              >
+                <Input
+                  value={displayData.displayName}
+                  onChange={(e) => onChange("displayName", e.target.value)}
+                  className="border-border bg-background/90 text-2xl font-bold text-foreground"
+                  placeholder={t("profile.display_name")}
+                />
+              </motion.div>
+            ) : (
+              <motion.h2
+                key="static-name"
+                className="text-2xl font-bold text-foreground"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              >
+                {displayData.displayName || t("profile.traveler")}
+              </motion.h2>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {isEditing && (
+              <motion.div
+                key="avatar-upload"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              >
+                <AvatarUpload
+                  userId={data.uid}
+                  currentAvatarUrl={displayData.avatarUrl ?? data.avatarUrl}
+                  profileAvatarUrl={data.avatarUrl}
+                  googleAvatarUrl={googleAvatarUrl}
+                  onUploadSuccess={onAvatarUpload || (() => {})}
+                  isEditing={isEditing}
+                  editSessionId={editSessionId}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Mail className="w-4 h-4" />
+              <span className="break-all">{data.email}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4" />
+              <span suppressHydrationWarning>{t("profile.joined")} {formatMonthYear(data.createdAt)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Star className="w-4 h-4" />
+              <span suppressHydrationWarning>{t("profile.last_signin")} {formatMonthYear(data.lastSignInAt)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div>
+    </motion.div>
+  );
+}

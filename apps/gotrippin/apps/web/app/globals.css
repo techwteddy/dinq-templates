@@ -1,0 +1,333 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+/* If open/close animations or Radix data-state styles break: npm i -D shadcn, then add: @import "shadcn/tailwind.css"; here (adds data-open/data-closed/etc. and no-scrollbar). */
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * /home hero only: system UI stack so LCP headline paints without waiting on Figtree (Slow 4G / PSI).
+ * Rest of the app still uses next/font on <html> (see app/layout.tsx).
+ */
+.landing-hero-lcp-font {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+}
+.landing-hero-lcp-font :is(button, a) {
+  font-family: inherit;
+}
+
+/* Body + display: next/font on <html> sets --font-figtree and --font-martian (see app/layout.tsx). */
+
+@theme inline {
+  /* Primary UI: readable, professional */
+  --font-sans: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+  /* Headlines / marketing: Martian Grotesk variable (Evil Martians, OFL) */
+  --font-display: var(--font-martian), ui-sans-serif, system-ui, sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+}
+
+/* Light (default): aurora-washed paper (not flat white) + brand coral */
+:root {
+  color-scheme: light;
+  --radius: 0.625rem;
+  --brand-coral: hsl(3 100% 72%);
+  --brand-coral-hover: color-mix(in srgb, var(--brand-coral) 88%, black);
+  /* Slightly below aurora highlights so coral/lilac washes read as “glow”, not flat white */
+  --background: oklch(0.946 0.028 85);
+  --foreground: oklch(0.22 0.035 280);
+  --card: oklch(0.995 0.008 85);
+  --card-foreground: oklch(0.22 0.035 280);
+  --popover: oklch(0.995 0.008 85);
+  --popover-foreground: oklch(0.22 0.035 280);
+  --primary: var(--brand-coral);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.96 0.02 85);
+  --secondary-foreground: oklch(0.3 0.04 280);
+  --muted: oklch(0.96 0.015 85);
+  --muted-foreground: oklch(0.48 0.03 280);
+  --accent: oklch(0.96 0.04 25);
+  --accent-foreground: oklch(0.35 0.14 25);
+  --destructive: oklch(0.55 0.22 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.9 0.02 85);
+  --input: oklch(0.92 0.02 85);
+  --ring: var(--brand-coral);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.98 0.01 85);
+  --sidebar-foreground: oklch(0.22 0.035 280);
+  --sidebar-primary: var(--brand-coral);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.94 0.02 85);
+  --sidebar-accent-foreground: oklch(0.22 0.035 280);
+  --sidebar-border: oklch(0.9 0.02 85);
+  --sidebar-ring: var(--brand-coral);
+  --surface: var(--card);
+  --surface-alt: var(--muted);
+  /** Alias for legacy `var(--bg)` (activity picker, forms) */
+  --bg: var(--background);
+  --accent-hover: var(--primary);
+  /**
+   * Light glass: frosted white gradient so blur reads on tinted aurora (Dock uses card/50 on light — too faint here).
+   */
+  --glass-dock-border: color-mix(in oklch, var(--border) 52%, transparent);
+  --glass-dock-fill: linear-gradient(
+    to bottom right,
+    rgb(255 255 255 / 0.58),
+    rgb(255 255 255 / 0.34),
+    rgb(255 255 255 / 0.14)
+  );
+  --glass-dock-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.07), 0 4px 6px -4px rgb(0 0 0 / 0.05);
+}
+
+/* Dark: deep aurora × coral shell */
+.dark {
+  color-scheme: dark;
+  --brand-coral: hsl(3 100% 72%);
+  --brand-coral-hover: color-mix(in srgb, var(--brand-coral) 88%, black);
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: var(--brand-coral);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.23 0.01 270);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.28 0.02 270);
+  --muted-foreground: oklch(0.7 0.03 270);
+  --accent: oklch(0.73 0.17 25);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.46 0.22 25);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.15 0 0 / 0.08);
+  --input: oklch(0.15 0 0 / 0.15);
+  --ring: var(--brand-coral);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: var(--brand-coral);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: var(--brand-coral);
+  --surface: var(--card);
+  --surface-alt: var(--muted);
+  --bg: var(--background);
+  --accent-hover: var(--primary);
+  /* Dark dock-matched glass (see Dock.tsx) */
+  --glass-dock-border: rgb(255 255 255 / 0.15);
+  --glass-dock-fill: linear-gradient(
+    to bottom right,
+    rgb(255 255 255 / 0.14),
+    rgb(255 255 255 / 0.07),
+    transparent
+  );
+  --glass-dock-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    font-family: var(--font-sans);
+  }
+  html {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+    /* 100dvh tracks mobile browser chrome (URL bar / bottom toolbar); 100vh alone clips on Brave, Safari */
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+}
+
+/*
+ * Map Tailwind `min-h-screen` / `h-screen` to dynamic viewport where supported so full-height
+ * shells (create trip, trip overview scroll, maps) respect visible area on Android/iOS.
+ */
+@layer utilities {
+  .min-h-screen {
+    min-height: 100vh;
+  }
+  .h-screen {
+    height: 100vh;
+  }
+  @supports (height: 100dvh) {
+    .min-h-screen {
+      min-height: 100dvh;
+    }
+    .h-screen {
+      height: 100dvh;
+    }
+  }
+}
+
+/* Use for headlines, landing hero, marketing – e.g. className="font-display" */
+@utility font-display {
+  font-family: var(--font-display);
+}
+
+@utility scrollbar-none {
+    scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/**
+ * Profile/settings glass — same recipe as `Dock.tsx` (explicit classes so Turbopack/Tailwind always emit;
+ * do not use removed --glass-panel-* vars). Keep in sync with Dock manually.
+ * Note: do not put these on a Framer `motion` node that uses translateY — use an inner static wrapper.
+ */
+@layer components {
+  /**
+   * Aurora backdrop: real `background-image` on a class (not `background-image: var(--token)` with commas).
+   * Some WebKit / inline-style paths drop multi-layer custom props → flat `--background` only.
+   */
+  .aurora-stack-fill {
+    background-color: oklch(0.946 0.028 85);
+    background-image: radial-gradient(
+        ellipse 95% 55% at 18% 102%,
+        color-mix(in srgb, #ff7670 52%, white) 0%,
+        transparent 58%
+      ),
+      radial-gradient(
+        circle at center,
+        transparent 40%,
+        color-mix(in oklch, oklch(0.52 0.14 285) 22%, white 78%) 100%
+      ),
+      radial-gradient(
+        110% 90% at 78% -5%,
+        color-mix(in srgb, #ff7670 38%, white) 0%,
+        transparent 48%
+      ),
+      linear-gradient(
+        305deg,
+        transparent 8%,
+        color-mix(in oklch, oklch(0.5 0.16 285) 32%, white 68%) 46%,
+        transparent 82%
+      ),
+      linear-gradient(
+        128deg,
+        color-mix(in srgb, #ff7670 58%, white) 0%,
+        color-mix(in srgb, #ff7670 22%, white) 48%,
+        transparent 100%
+      ),
+      radial-gradient(
+        145% 135% at 50% 118%,
+        color-mix(in srgb, #ff7670 72%, white) 0%,
+        oklch(0.82 0.1 40) 24%,
+        oklch(0.86 0.09 285) 46%,
+        oklch(0.91 0.045 85) 70%,
+        oklch(0.965 0.02 85) 100%
+      );
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    background-position: center;
+  }
+
+  .dark .aurora-stack-fill {
+    background-color: oklch(0.145 0 0);
+    background-image: radial-gradient(
+        circle at center,
+        transparent 52%,
+        color-mix(in oklab, var(--accent) 22%, black 78%) 100%
+      ),
+      radial-gradient(100% 80% at 75% 0%, rgba(255, 255, 255, 0.045) 0%, transparent 55%),
+      linear-gradient(
+        315deg,
+        color-mix(in oklab, black 80%, var(--accent) 20%) 0%,
+        transparent 70%
+      ),
+      linear-gradient(
+        135deg,
+        color-mix(in oklab, var(--accent) 60%, black 40%) 0%,
+        color-mix(in oklab, var(--accent) 30%, black 70%) 60%,
+        transparent 100%
+      ),
+      radial-gradient(120% 90% at 50% 110%, black 0%, hsl(0 0% 4%) 50%, black 100%);
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
+    background-position: center;
+  }
+
+  .glass-panel {
+    border: 1px solid var(--glass-dock-border);
+    background-color: transparent;
+    background-image: var(--glass-dock-fill);
+    box-shadow: var(--glass-dock-shadow);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+  }
+
+  .glass-inset {
+    position: relative;
+    overflow: hidden;
+    border-radius: calc(var(--radius) + 4px);
+    border: 1px solid var(--glass-dock-border);
+    background-color: transparent;
+    background-image: var(--glass-dock-fill);
+    box-shadow: none;
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+  }
+}
+
+/* Trip print / Save as PDF — preserve dark surfaces and coral accents in exported PDFs */
+@media print {
+  .trip-print-root {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

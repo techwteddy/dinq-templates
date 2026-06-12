@@ -1,0 +1,67 @@
+# ───────────────────────────────
+# Root Monorepo Ignore
+# ───────────────────────────────
+
+# Node / Dependencies
+node_modules
+**/node_modules
+.pnp
+.pnp.*
+
+# Package managers
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Builds / Outputs
+.next
+**/.next
+# Next.js regenerates this; path differs for dev vs build, so ignore to avoid flip when switching machines
+apps/web/next-env.d.ts
+dist
+build
+out
+
+# Coverage / Testing
+coverage
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# OS Junk
+.DS_Store
+Thumbs.db
+
+# Env Files (never commit secrets)
+.env
+.env.*
+!.env.example
+
+# TypeScript
+*.tsbuildin*
+
+# IDE Settings
+.vscode/
+.idea/
+
+# AI tooling configs (local only)
+.claude/
+.cursor/
+AGENTS.md
+.cursorrules
+
+# Build scripts (local only)
+scripts/
+
+# Internal docs and planning (local only)
+docs/
+features.todo
+
+# Deployment scripts (contain server details)
+deploy.sh

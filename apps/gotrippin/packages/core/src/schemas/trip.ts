@@ -1,0 +1,586 @@
+import { z } from 'zod';
+
+// ============================================
+// Photo Schemas (defined first — used in TripSchema)
+// ============================================
+
+export const PhotoSchema = z.object({
+  id: z.string().uuid(),
+  storage_key: z.string(),
+  source: z.enum(['unsplash', 'upload']),
+  unsplash_photo_id: z.string().nullable().optional(),
+  photographer_name: z.string().nullable().optional(),
+  photographer_url: z.string().nullable().optional(),
+  blur_hash: z.string().nullable().optional(),
+  dominant_color: z.string().nullable().optional(),
+  created_at: z.string().datetime(),
+});
+
+/**
+ * Input sent by the frontend when a user selects an Unsplash photo as trip cover.
+ * The backend downloads the image to R2, creates a photos row, and links cover_photo_id.
+ */
+export const CoverPhotoInputSchema = z.object({
+  unsplash_photo_id: z.string(),
+  download_location: z.string().url(),
+  image_url: z.string().url(),
+  photographer_name: z.string(),
+  photographer_url: z.string().url(),
+  blur_hash: z.string().nullable().optional(),
+  dominant_color: z.string().nullable().optional(),
+});
+
+export type Photo = z.infer<typeof PhotoSchema>;
+export type CoverPhotoInput = z.infer<typeof CoverPhotoInputSchema>;
+
+/** Row in `trip_gallery_images` — member uploads for trip lightbox grid */
+export const TripGalleryImageSchema = z.object({
+  id: z.string().uuid(),
+  trip_id: z.string().uuid(),
+  storage_key: z.string().min(1),
+  blur_hash: z.string().nullable().optional(),
+  width: z.number().int().positive().nullable().optional(),
+  height: z.number().int().positive().nullable().optional(),
+  sort_order: z.number().int(),
+  created_by: z.string().uuid(),
+  created_at: z.string(),
+});
+
+export const AddTripGalleryImageBodySchema = z.object({
+  storage_key: z.string().min(1),
+  blur_hash: z.string().nullable().optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+});
+
+export type TripGalleryImage = z.infer<typeof TripGalleryImageSchema>;
+export type AddTripGalleryImageBody = z.infer<typeof AddTripGalleryImageBodySchema>;
+
+/**
+ * Row version from Postgres/Supabase (`+00:00`) normalized to ISO Z for strict Zod datetime checks.
+ */
+export const ExpectedUpdatedAtSchema = z
+  .string()
+  .refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: 'Invalid row version timestamp',
+  })
+  .transform((value) => new Date(value).toISOString());
+
+/**
+ * Zod schema for a trip
+ * Matches the `public.trips` table in Supabase
+ *
+ * Note: user_id removed - trips use many-to-many relationship via trip_members table
+ */
+export const TripSchema = z.object({
+  id: z.string().uuid('Invalid trip ID format'),
+  share_code: z
+    .string()
+    .length(8, 'Share code must be exactly 8 characters')
+    .regex(/^[a-zA-Z0-9]{8}$/, 'Share code must be exactly 8 alphanumeric characters'),
+  title: z
+    .string()
+    .min(1, 'Title is required')
+    .max(200, 'Title must be less than 200 characters')
+    .nullable()
+    .optional(),
+  destination: z
+    .string()
+    .min(1, 'Destination is required')
+    .max(200, 'Destination must be less than 200 characters')
+    .nullable()
+    .optional(),
+  start_date: z
+    .string()
+    .datetime({ message: 'Invalid start date format' })
+    .nullable()
+    .optional(),
+  end_date: z
+    .string()
+    .datetime({ message: 'Invalid end date format' })
+    .nullable()
+    .optional(),
+  image_url: z.union([z.string().url('Invalid image URL'), z.null(), z.undefined()]).optional(),
+  cover_photo_id: z.string().uuid().nullable().optional(),
+  cover_photo: PhotoSchema.nullable().optional(),
+  color: z.union([z.string(), z.null(), z.undefined()]).optional(),
+  description: z
+    .string()
+    .max(2000, 'Description must be less than 2000 characters')
+    .nullable()
+    .optional(),
+  /** Long-form notes (trip overview); JSON document string from Tiptap or legacy plain text. */
+  notes: z
+    .string()
+    .max(500000, 'Notes must be less than 500000 characters')
+    .nullable()
+    .optional(),
+  /** Total budget in minor units (e.g. cents); pair with budget_currency */
+  budget_amount_minor: z.number().int().min(0).nullable().optional(),
+  /** ISO 4217 uppercase (e.g. EUR) */
+  budget_currency: z
+    .union([
+      z.null(),
+      z
+        .string()
+        .length(3)
+        .regex(/^[A-Za-z]{3}$/, 'Invalid currency code')
+        .transform((s) => s.toUpperCase()),
+    ])
+    .optional(),
+  /** Trip creator (Supabase `trips.created_by`) — used for “My trips” vs “Shared” on the client. */
+  created_by: z.string().uuid('Invalid creator ID format').nullable().optional(),
+  /**
+   * Optional on GET /trips list: members for dashboard facepile (join order).
+   * Not a DB column — merged from `trip_members` + `profiles`.
+   */
+  member_facepile: z
+    .array(
+      z.object({
+        user_id: z.string().uuid('Invalid member id'),
+        avatar_url: z.string().nullable().optional(),
+        label: z.string().min(1),
+      })
+    )
+    .max(12)
+    .optional(),
+  created_at: z.string().datetime({ message: 'Invalid creation date format' }),
+  /** Server-maintained; used for optimistic concurrency and Realtime. */
+  updated_at: z.string().datetime({ message: 'Invalid update date format' }).optional(),
+})
+  .refine(
+    (data) => {
+      // Validate that end_date is after start_date if both are provided
+      if (data.start_date && data.end_date) {
+        return new Date(data.end_date) >= new Date(data.start_date);
+      }
+      return true;
+    },
+    {
+      message: 'End date must be after or equal to start date',
+      path: ['end_date'],
+    }
+  );
+
+export const TripMemberRoleSchema = z.enum(['editor', 'viewer']);
+
+/**
+ * Zod schema for trip member (bridge table)
+ * Matches the `public.trip_members` table in Supabase
+ */
+export const TripMemberSchema = z.object({
+  trip_id: z.string().uuid('Invalid trip ID format'),
+  user_id: z.string().uuid('Invalid user ID format'),
+  joined_at: z.string().datetime({ message: 'Invalid join date format' }),
+  role: TripMemberRoleSchema,
+});
+
+/**
+ * Schema for creating a new trip
+ * ID and created_at are auto-generated by the database
+ */
+export const CreateTripSchema = TripSchema.omit({
+  id: true,
+  created_at: true,
+  share_code: true,
+});
+
+/**
+ * Schema for updating an existing trip
+ * All fields except id and created_at are optional
+ */
+export const UpdateTripSchema = TripSchema.omit({
+  created_at: true,
+}).partial().required({ id: true });
+
+/**
+ * Schema for trip update request (without ID)
+ * Used in API endpoints where ID comes from route params.
+ * Includes cover_photo input (downloaded to R2 by backend at save time).
+ */
+export const TripUpdateDataSchema = TripSchema.omit({
+  id: true,
+  created_at: true,
+  cover_photo: true,
+})
+  .partial()
+  .extend({
+    cover_photo: CoverPhotoInputSchema.optional(),
+    /** R2 key from a prior browser upload (`trip-images/uploads/{userId}/…`). Mutually exclusive with `cover_photo`. */
+    cover_upload_storage_key: z.string().min(1).optional(),
+    /** If sent, update fails with 409 when the trip row changed since this timestamp. */
+    expected_updated_at: ExpectedUpdatedAtSchema.optional(),
+  })
+  .refine(
+    (data) => !(data.cover_photo && data.cover_upload_storage_key),
+    {
+      message: 'Send either cover_photo (Unsplash) or cover_upload_storage_key, not both',
+      path: ['cover_upload_storage_key'],
+    }
+  );
+
+/**
+ * Schema for adding a member to a trip
+ */
+export const AddTripMemberSchema = z.object({
+  trip_id: z.string().uuid('Invalid trip ID format'),
+  user_id: z.string().uuid('Invalid user ID format'),
+});
+
+/**
+ * Schema for removing a member from a trip
+ */
+export const RemoveTripMemberSchema = z.object({
+  trip_id: z.string().uuid('Invalid trip ID format'),
+  user_id: z.string().uuid('Invalid user ID format'),
+});
+
+/**
+ * Schema for trip creation request
+ * Used in API endpoints - user will be auto-added as member after creation
+ * Includes cover_photo input (downloaded to R2 by backend at save time).
+ */
+export const TripCreateDataSchema = TripSchema.omit({
+  id: true,
+  created_at: true,
+  cover_photo: true,
+})
+  .partial()
+  .extend({
+    cover_photo: CoverPhotoInputSchema.optional(),
+    cover_upload_storage_key: z.string().min(1).optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.start_date && data.end_date) {
+        return new Date(data.end_date) >= new Date(data.start_date);
+      }
+      return true;
+    },
+    {
+      message: 'End date must be after or equal to start date',
+      path: ['end_date'],
+    }
+  )
+  .refine(
+    (data) => !(data.cover_photo && data.cover_upload_storage_key),
+    {
+      message: 'Send either cover_photo (Unsplash) or cover_upload_storage_key, not both',
+      path: ['cover_upload_storage_key'],
+    }
+  );
+
+/**
+ * TypeScript types inferred from Zod schemas
+ */
+export type Trip = z.infer<typeof TripSchema>;
+export type TripMember = z.infer<typeof TripMemberSchema>;
+export type TripMemberRole = z.infer<typeof TripMemberRoleSchema>;
+export type CreateTrip = z.infer<typeof CreateTripSchema>;
+export type UpdateTrip = z.infer<typeof UpdateTripSchema>;
+export type TripUpdateData = z.infer<typeof TripUpdateDataSchema>;
+export type TripCreateData = z.infer<typeof TripCreateDataSchema>;
+export type AddTripMember = z.infer<typeof AddTripMemberSchema>;
+export type RemoveTripMember = z.infer<typeof RemoveTripMemberSchema>;
+
+// ============================================
+// Trip Location Schemas (Route waypoints)
+// ============================================
+
+/**
+ * Activity type enum values
+ */
+export const ActivityTypeEnum = z.enum([
+  'flight',
+  'accommodation',
+  'restaurant',
+  'attraction',
+  'transport',
+  'custom',
+  'car_rental',
+  'train',
+  'bus',
+  'ferry',
+  'museum',
+  'concert',
+  'shopping',
+  'beach',
+  'hiking',
+  'other',
+]);
+
+/**
+ * Zod schema for a trip location (route waypoint)
+ * Matches the `public.trip_locations` table in Supabase
+ */
+export const TripLocationSchema = z.object({
+  id: z.string().uuid('Invalid location ID format'),
+  trip_id: z.string().uuid('Invalid trip ID format'),
+  location_name: z
+    .string()
+    .min(1, 'Location name is required')
+    .max(200, 'Location name must be less than 200 characters'),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  order_index: z.number().int().positive('Order index must be positive'),
+  arrival_date: z.string().datetime({ message: 'Invalid arrival date format' }).nullable().optional(),
+  departure_date: z.string().datetime({ message: 'Invalid departure date format' }).nullable().optional(),
+  marker_color: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid marker color format')
+    .nullable()
+    .optional(),
+  google_place_id: z.string().max(512).nullable().optional(),
+  photo_url: z.string().max(2048).nullable().optional(),
+  formatted_address: z.string().max(500).nullable().optional(),
+  created_at: z.string().datetime({ message: 'Invalid creation date format' }),
+  updated_at: z.string().datetime({ message: 'Invalid update date format' }),
+}).refine(
+  (data) => {
+    if (data.arrival_date && data.departure_date) {
+      return new Date(data.departure_date) >= new Date(data.arrival_date);
+    }
+    return true;
+  },
+  {
+    message: 'Departure date must be after or equal to arrival date',
+    path: ['departure_date'],
+  }
+);
+
+/**
+ * Schema for creating a new trip location
+ */
+export const CreateTripLocationSchema = z.object({
+  trip_id: z.string().uuid('Invalid trip ID format'),
+  location_name: z
+    .string()
+    .min(1, 'Location name is required')
+    .max(200, 'Location name must be less than 200 characters'),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  order_index: z.number().int().positive('Order index must be positive').optional(),
+  arrival_date: z.string().datetime({ message: 'Invalid arrival date format' }).nullable().optional(),
+  departure_date: z.string().datetime({ message: 'Invalid departure date format' }).nullable().optional(),
+  marker_color: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid marker color format')
+    .optional(),
+  google_place_id: z.string().max(512).nullable().optional(),
+  photo_url: z.string().max(2048).nullable().optional(),
+  formatted_address: z.string().max(500).nullable().optional(),
+}).refine(
+  (data) => {
+    if (data.arrival_date && data.departure_date) {
+      return new Date(data.departure_date) >= new Date(data.arrival_date);
+    }
+    return true;
+  },
+  {
+    message: 'Departure date must be after or equal to arrival date',
+    path: ['departure_date'],
+  }
+);
+
+/**
+ * Schema for updating an existing trip location
+ */
+export const UpdateTripLocationSchema = z.object({
+  /** If sent, update fails with 409 when this location row changed since this timestamp. */
+  expected_updated_at: ExpectedUpdatedAtSchema.optional(),
+  location_name: z
+    .string()
+    .min(1, 'Location name is required')
+    .max(200, 'Location name must be less than 200 characters')
+    .optional(),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  order_index: z.number().int().positive('Order index must be positive').optional(),
+  arrival_date: z.string().datetime({ message: 'Invalid arrival date format' }).nullable().optional(),
+  departure_date: z.string().datetime({ message: 'Invalid departure date format' }).nullable().optional(),
+  marker_color: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid marker color format')
+    .nullable()
+    .optional(),
+  google_place_id: z.string().max(512).nullable().optional(),
+  photo_url: z.string().max(2048).nullable().optional(),
+  formatted_address: z.string().max(500).nullable().optional(),
+});
+
+/**
+ * Schema for reordering trip locations
+ */
+export const ReorderLocationsSchema = z.object({
+  location_ids: z.array(z.string().uuid('Invalid location ID format')).min(1, 'At least one location ID required'),
+});
+
+// ============================================
+// Activity Schemas
+// ============================================
+
+/**
+ * Zod schema for an activity
+ * Matches the `public.activities` table in Supabase
+ */
+export const ActivitySchema = z.object({
+  id: z.string().uuid('Invalid activity ID format'),
+  trip_id: z.string().uuid('Invalid trip ID format'),
+  location_id: z.string().uuid('Invalid location ID format').nullable().optional(),
+  type: ActivityTypeEnum.default('custom'),
+  title: z
+    .string()
+    .min(1, 'Title is required')
+    .max(255, 'Title must be less than 255 characters'),
+  notes: z.string().max(5000, 'Notes must be less than 5000 characters').nullable().optional(),
+  start_time: z.string().datetime({ message: 'Invalid start time format' }).nullable().optional(),
+  end_time: z.string().datetime({ message: 'Invalid end time format' }).nullable().optional(),
+  all_day: z.boolean().default(false),
+  icon: z.string().max(50).nullable().optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid color format').nullable().optional(),
+  created_by: z.string().uuid('Invalid user ID format').nullable().optional(),
+  created_at: z.string().datetime({ message: 'Invalid creation date format' }),
+  updated_at: z.string().datetime({ message: 'Invalid update date format' }),
+}).refine(
+  (data) => {
+    if (data.start_time && data.end_time) {
+      return new Date(data.end_time) >= new Date(data.start_time);
+    }
+    return true;
+  },
+  {
+    message: 'End time must be after or equal to start time',
+    path: ['end_time'],
+  }
+);
+
+/**
+ * Schema for creating a new activity
+ */
+export const CreateActivitySchema = z.object({
+  trip_id: z.string().uuid('Invalid trip ID format'),
+  location_id: z.string().uuid('Invalid location ID format').nullable().optional(),
+  type: ActivityTypeEnum.default('custom'),
+  title: z
+    .string()
+    .min(1, 'Title is required')
+    .max(255, 'Title must be less than 255 characters'),
+  notes: z.string().max(5000, 'Notes must be less than 5000 characters').nullable().optional(),
+  start_time: z.string().datetime({ message: 'Invalid start time format' }).nullable().optional(),
+  end_time: z.string().datetime({ message: 'Invalid end time format' }).nullable().optional(),
+  all_day: z.boolean().default(false),
+  icon: z.string().max(50).nullable().optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid color format').nullable().optional(),
+}).refine(
+  (data) => {
+    if (data.start_time && data.end_time) {
+      return new Date(data.end_time) >= new Date(data.start_time);
+    }
+    return true;
+  },
+  {
+    message: 'End time must be after or equal to start time',
+    path: ['end_time'],
+  }
+);
+
+/**
+ * Schema for updating an existing activity
+ */
+export const UpdateActivitySchema = z.object({
+  /** If sent, update fails with 409 when this activity row changed since this timestamp. */
+  expected_updated_at: ExpectedUpdatedAtSchema.optional(),
+  location_id: z.string().uuid('Invalid location ID format').nullable().optional(),
+  type: ActivityTypeEnum.optional(),
+  title: z
+    .string()
+    .min(1, 'Title is required')
+    .max(255, 'Title must be less than 255 characters')
+    .optional(),
+  notes: z.string().max(5000, 'Notes must be less than 5000 characters').nullable().optional(),
+  start_time: z.string().datetime({ message: 'Invalid start time format' }).nullable().optional(),
+  end_time: z.string().datetime({ message: 'Invalid end time format' }).nullable().optional(),
+  all_day: z.boolean().optional(),
+  icon: z.string().max(50).nullable().optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Invalid color format').nullable().optional(),
+});
+
+// ============================================
+// Trip expense schemas (`trip_expenses` table)
+// ============================================
+
+const ExpenseCurrencyCodeSchema = z
+  .string()
+  .min(1)
+  .max(3)
+  .transform((s) => s.trim().toUpperCase())
+  .refine((s) => /^[A-Z]{3}$/.test(s), 'Currency must be a 3-letter ISO 4217 code');
+
+export const TripExpenseSchema = z.object({
+  id: z.string().uuid('Invalid expense ID format'),
+  trip_id: z.string().uuid('Invalid trip ID format'),
+  location_id: z.string().uuid('Invalid location ID format').nullable().optional(),
+  activity_id: z.string().uuid('Invalid activity ID format').nullable().optional(),
+  amount_minor: z
+    .number()
+    .int('Amount must be a whole number of minor units')
+    .positive('Amount must be positive'),
+  currency_code: z
+    .string()
+    .length(3)
+    .regex(/^[A-Z]{3}$/, 'Invalid currency code'),
+  title: z.string().min(1, 'Title is required').max(200, 'Title too long'),
+  notes: z.string().max(5000, 'Notes too long').nullable().optional(),
+  category: z.string().max(100).nullable().optional(),
+  spent_at: z.string().datetime({ message: 'Invalid spent_at format' }),
+  created_by: z.string().uuid('Invalid user ID format'),
+  created_at: z.string().datetime({ message: 'Invalid creation date format' }),
+  updated_at: z.string().datetime({ message: 'Invalid update date format' }),
+});
+
+export const CreateTripExpenseSchema = z.object({
+  location_id: z.string().uuid('Invalid location ID format').nullable().optional(),
+  activity_id: z.string().uuid('Invalid activity ID format').nullable().optional(),
+  amount_minor: z
+    .number()
+    .int('Amount must be a whole number of minor units')
+    .positive('Amount must be positive'),
+  currency_code: ExpenseCurrencyCodeSchema,
+  title: z.string().min(1, 'Title is required').max(200, 'Title too long').trim(),
+  notes: z.string().max(5000, 'Notes too long').nullable().optional(),
+  category: z.string().max(100).nullable().optional(),
+  spent_at: z.string().datetime({ message: 'Invalid spent_at format' }).optional(),
+});
+
+export const UpdateTripExpenseSchema = z.object({
+  expected_updated_at: ExpectedUpdatedAtSchema.optional(),
+  location_id: z.string().uuid('Invalid location ID format').nullable().optional(),
+  activity_id: z.string().uuid('Invalid activity ID format').nullable().optional(),
+  amount_minor: z
+    .number()
+    .int('Amount must be a whole number of minor units')
+    .positive('Amount must be positive')
+    .optional(),
+  currency_code: ExpenseCurrencyCodeSchema.optional(),
+  title: z.string().min(1, 'Title is required').max(200, 'Title too long').trim().optional(),
+  notes: z.string().max(5000, 'Notes too long').nullable().optional(),
+  category: z.string().max(100).nullable().optional(),
+  spent_at: z.string().datetime({ message: 'Invalid spent_at format' }).optional(),
+});
+
+// Trip Location Types
+export type TripLocation = z.infer<typeof TripLocationSchema>;
+export type CreateTripLocation = z.infer<typeof CreateTripLocationSchema>;
+export type UpdateTripLocation = z.infer<typeof UpdateTripLocationSchema>;
+export type ReorderLocations = z.infer<typeof ReorderLocationsSchema>;
+
+// Activity Types
+export type ActivityType = z.infer<typeof ActivityTypeEnum>;
+export type Activity = z.infer<typeof ActivitySchema>;
+export type CreateActivity = z.infer<typeof CreateActivitySchema>;
+export type UpdateActivity = z.infer<typeof UpdateActivitySchema>;
+
+export type TripExpense = z.infer<typeof TripExpenseSchema>;
+export type CreateTripExpense = z.infer<typeof CreateTripExpenseSchema>;
+export type UpdateTripExpense = z.infer<typeof UpdateTripExpenseSchema>;
+

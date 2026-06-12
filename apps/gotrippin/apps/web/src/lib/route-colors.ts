@@ -1,0 +1,49 @@
+/**
+ * Shared palette for route leg colors and trip accent.
+ * Each leg of a multi-stop route cycles through this palette.
+ */
+export const ROUTE_COLOR_PALETTE: string[] = [
+  "#3b82f6", // blue
+  "#22c55e", // green
+  "#f59e0b", // amber
+  "#8b5cf6", // violet
+  "#06b6d4", // cyan
+  "#ec4899", // pink
+  "#6366f1", // indigo
+  "#14b8a6", // teal
+  "#f97316", // orange
+  "#ff7670", // coral
+];
+
+/** Returns the palette color for a given leg index (cycles). */
+export function getLegColor(legIndex: number): string {
+  return ROUTE_COLOR_PALETTE[legIndex % ROUTE_COLOR_PALETTE.length];
+}
+
+/**
+ * Stable palette color for a trip location when `marker_color` is unset.
+ * Same UUID always maps to the same swatch so reordering does not recolor markers or legs.
+ */
+export function getStablePaletteColorForLocationId(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i += 1) {
+    h = (Math.imul(31, h) + id.charCodeAt(i)) >>> 0;
+  }
+  return getLegColor(h);
+}
+
+/** Stable swatch for a user id (notes co-editing caret / highlight). */
+export function getStablePaletteColorForUserId(userId: string): string {
+  return getStablePaletteColorForLocationId(userId);
+}
+
+const HEX_REGEX = /^#[0-9A-Fa-f]{6}$/;
+
+export function isSolidRouteColor(value: string | null | undefined): value is string {
+  return typeof value === "string" && HEX_REGEX.test(value);
+}
+
+/** Returns a random color from the palette (for new trips when user doesn't pick one). */
+export function getRandomRouteColor(): string {
+  return ROUTE_COLOR_PALETTE[Math.floor(Math.random() * ROUTE_COLOR_PALETTE.length)];
+}

@@ -1,0 +1,144 @@
+import { TripUpdateDataSchema } from '@gotrippin/core';
+import { IsOptional, IsString, MaxLength, MinLength, Min, IsISO8601, ValidateNested, IsInt } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ApiProperty } from '@nestjs/swagger';
+import { z } from 'zod';
+import { CoverPhotoDto } from './create-trip.dto';
+
+/**
+ * DTO for updating an existing trip
+ * Uses shared Zod schema from @gotrippin/core
+ */
+export class UpdateTripDto {
+  @ApiProperty({ 
+    required: false,
+    example: 'Summer in Paris',
+    description: 'Trip title (1-200 characters)'
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  title?: string;
+
+  @ApiProperty({ 
+    required: false,
+    example: 'Paris, France',
+    description: 'Trip destination (1-200 characters)'
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  destination?: string;
+
+  @ApiProperty({ 
+    required: false,
+    example: '2025-12-01T10:00:00.000Z',
+    description: 'Trip start date (ISO 8601 format)'
+  })
+  @IsOptional()
+  @IsISO8601({}, { message: 'Start date must be a valid ISO 8601 date' })
+  start_date?: string;
+
+  @ApiProperty({ 
+    required: false,
+    example: '2025-12-10T10:00:00.000Z',
+    description: 'Trip end date (ISO 8601 format, must be after start date)'
+  })
+  @IsOptional()
+  @IsISO8601({}, { message: 'End date must be a valid ISO 8601 date' })
+  end_date?: string;
+
+  @ApiProperty({ required: false, description: 'Unsplash cover photo metadata (downloaded to R2 at save time)' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CoverPhotoDto)
+  cover_photo?: CoverPhotoDto;
+
+  @ApiProperty({
+    required: false,
+    description: 'R2 storage key after client upload (trip-images/uploads/{userId}/…); creates photos row with source=upload',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  cover_upload_storage_key?: string;
+
+  @ApiProperty({ 
+    required: false,
+    example: '#ff7670',
+    description: 'Trip color (hex code)'
+  })
+  @IsOptional()
+  @IsString()
+  color?: string;
+
+  @ApiProperty({ 
+    required: false,
+    example: 'Exploring the city of lights and enjoying French cuisine',
+    description: 'Trip description (max 2000 characters)'
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  description?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Trip notes — rich-text JSON (Tiptap) or plain text; max 500000 characters',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500000)
+  notes?: string | null;
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    description: 'Total budget in minor units (e.g. cents); set with budget_currency',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  budget_amount_minor?: number | null;
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    description: 'ISO 4217 currency for budget_amount_minor (e.g. EUR)',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(3)
+  budget_currency?: string | null;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'If sent, update fails with 409 when the trip row changed since this timestamp',
+  })
+  @IsOptional()
+  @IsISO8601({}, { message: 'expected_updated_at must be a valid ISO 8601 date' })
+  expected_updated_at?: string;
+
+  /**
+   * Validates the data using Zod schema
+   * Throws error if validation fails
+   */
+  static validate(data: unknown): z.infer<typeof TripUpdateDataSchema> {
+    return TripUpdateDataSchema.parse(data);
+  }
+
+  /**
+   * Safe validation that returns result object
+   * Use this for graceful error handling
+   */
+  static safeParse(data: unknown) {
+    return TripUpdateDataSchema.safeParse(data);
+  }
+}
+
+

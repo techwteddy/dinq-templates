@@ -1,0 +1,206 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Allow skill card glow to bleed outside the carousel track */
+.skills-slider .slick-list {
+  overflow: visible;
+}
+.skills-slider .slick-slide > div {
+  padding: 4px 0;
+}
+
+.skip-link {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 9999;
+  padding: 0.5rem 1rem;
+  background: #14b8a6;
+  color: #fff;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.skip-link:focus {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── CSS variables – dark (default) ────────────────────────────── */
+:root {
+  --bg-from: #0f172a;
+  --bg-to: #1e293b;
+  --card-bg: rgba(255, 255, 255, 0.1);
+  --card-border: rgba(255, 255, 255, 0.2);
+  --nav-bg: rgba(17, 24, 39, 0.9);
+  --color-text: #d1d5db;
+  --color-text-muted: #9ca3af;
+  --color-heading: #f1f5f9;
+  --blob-opacity: 0.18;
+  --modal-bg: rgba(15, 23, 42, 0.95);
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.4);
+  /* Accent tokens — teal-400 + blue-500 (adequate contrast on dark bg) */
+  --accent-teal: #14b8a6;
+  --accent-blue: #3b82f6;
+  --accent-purple: #9333ea;
+  --gradient-accent: linear-gradient(135deg, #14b8a6, #3b82f6);
+  --gradient-accent-r: linear-gradient(to right, #14b8a6, #3b82f6);
+}
+
+/* ── CSS variables – light ──────────────────────────────────────── */
+[data-theme="light"] {
+  --bg-from: #f0f9ff;
+  --bg-to: #dbeafe;
+  --card-bg: rgba(255, 255, 255, 0.72);
+  --card-border: rgba(148, 163, 184, 0.35);
+  --nav-bg: rgba(248, 250, 252, 0.92);
+  --color-text: #334155;
+  --color-text-muted: #64748b;
+  --color-heading: #0f172a;
+  --blob-opacity: 0.08;
+  --modal-bg: rgba(248, 250, 252, 0.98);
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.10);
+  /* Accent tokens — teal-700 (4.6:1) + blue-700 (5.7:1) on light bg */
+  --accent-teal: #0f766e;
+  --accent-blue: #1d4ed8;
+  --accent-purple: #7e22ce;
+  --gradient-accent: linear-gradient(135deg, #0f766e, #1d4ed8);
+  --gradient-accent-r: linear-gradient(to right, #0f766e, #1d4ed8);
+}
+
+/* ── Base ───────────────────────────────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-geist-sans), sans-serif;
+  margin: 0;
+  padding: 0;
+  background: linear-gradient(135deg, var(--bg-from), var(--bg-to));
+  background-attachment: fixed;
+  color: var(--color-text);
+  transition: background 0.4s ease, color 0.4s ease;
+  overflow-x: hidden;
+}
+
+html {
+  overflow-x: hidden;
+}
+
+/* ── Light mode text overrides ──────────────────────────────────── */
+[data-theme="light"] .text-gray-300 { color: #334155 !important; }
+[data-theme="light"] .text-gray-400 { color: #64748b !important; }
+[data-theme="light"] .text-gray-500 { color: #94a3b8 !important; }
+[data-theme="light"] .bg-gray-700   { background-color: #cbd5e1 !important; }
+[data-theme="light"] .bg-gray-900   { background-color: rgba(248,250,252,0.92) !important; }
+[data-theme="light"] .text-gray-200 { color: #1e293b !important; }
+
+/* ── Light mode accent overrides (WCAG AA contrast) ─────────────── */
+[data-theme="light"] .text-teal-400                  { color: #0f766e !important; }
+[data-theme="light"] .hover\:text-teal-400:hover     { color: #0f766e !important; }
+[data-theme="light"] .hover\:text-teal-500:hover     { color: #0f766e !important; }
+[data-theme="light"] .text-blue-400                  { color: #1d4ed8 !important; }
+[data-theme="light"] .text-blue-500                  { color: #1d4ed8 !important; }
+[data-theme="light"] .hover\:text-blue-400:hover     { color: #1d4ed8 !important; }
+[data-theme="light"] .hover\:text-blue-500:hover     { color: #1d4ed8 !important; }
+[data-theme="light"] .bg-teal-400                    { background-color: #0f766e !important; }
+[data-theme="light"] .bg-blue-500                    { background-color: #1d4ed8 !important; }
+[data-theme="light"] .hover\:bg-teal-500:hover       { background-color: #0f766e !important; }
+[data-theme="light"] .from-teal-400                  { --tw-gradient-from: #0f766e !important; }
+[data-theme="light"] .to-blue-500                    { --tw-gradient-to: #1d4ed8 !important; }
+[data-theme="light"] .focus\:ring-teal-400           { --tw-ring-color: #0f766e !important; }
+
+/* ── Light mode nav shadow ──────────────────────────────────────── */
+[data-theme="light"] nav {
+  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* ── Light mode glass-card shadow ──────────────────────────────── */
+[data-theme="light"] .glass-card {
+  box-shadow: var(--shadow-card);
+}
+
+/* ── Glass card utility ─────────────────────────────────────────── */
+.glass-card {
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--card-border);
+  transition: background 0.4s ease, border-color 0.4s ease;
+}
+
+/* ── Focus styles ───────────────────────────────────────────────── */
+*:focus {
+  outline: none;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--accent-teal);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ── Hide scrollbar on timeline horizontal track ───────────────── */
+.timeline-scroll::-webkit-scrollbar { display: none; }
+
+/* ── Reduced motion ─────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Animated mesh background blobs ────────────────────────────── */
+@keyframes blob-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%  { transform: translate(40px, -30px) scale(1.08); }
+  66%  { transform: translate(-20px, 20px) scale(0.95); }
+}
+
+.mesh-blob {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: var(--blob-opacity);
+  pointer-events: none;
+  animation: blob-drift 18s ease-in-out infinite;
+  z-index: 0;
+  transition: opacity 0.4s ease;
+}
+
+.mesh-blob-1 {
+  width: 500px;
+  height: 500px;
+  top: -100px;
+  left: -100px;
+  background: radial-gradient(circle, #14b8a6, transparent 70%);
+  animation-delay: 0s;
+}
+
+.mesh-blob-2 {
+  width: 600px;
+  height: 600px;
+  bottom: -150px;
+  right: -150px;
+  background: radial-gradient(circle, #3b82f6, transparent 70%);
+  animation-delay: -6s;
+}
+
+.mesh-blob-3 {
+  width: 400px;
+  height: 400px;
+  top: 40%;
+  left: 50%;
+  background: radial-gradient(circle, #9333ea, transparent 70%);
+  animation-delay: -12s;
+  opacity: calc(var(--blob-opacity) * 0.6);
+}

@@ -1,0 +1,12 @@
+# robots.txt for your Next.js website
+
+User-agent: *
+Disallow: /api/   # Prevents search engines from indexing API routes
+Disallow: /admin  # Blocks potential admin routes if applicable
+
+# Allow Googlebot to index everything else
+User-agent: Googlebot
+Allow: /
+
+# Sitemap for better indexing (Make sure you generate and host a sitemap)
+Sitemap: https://fernando-ghiberti.vercel.app/sitemap.xml
