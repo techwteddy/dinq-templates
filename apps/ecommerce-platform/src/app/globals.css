@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@theme inline {
+    /* Neo-Brutalist Palette */
+    --color-ink: #0A2A1F;
+    --color-paper: #F8F4E8;
+    --color-acid: #D2E823;
+    --color-stone: #E5E0D6;
+
+    /* Font Families */
+    --font-display: var(--font-dela-gothic);
+    --font-sans: var(--font-space-grotesk);
+
+    /* Shadows for Neo-Brutalism */
+    --shadow-hard: 4px 4px 0px 0px #0A2A1F;
+    --shadow-hard-sm: 2px 2px 0px 0px #0A2A1F;
+    --shadow-hard-xl: 8px 8px 0px 0px #0A2A1F;
+    --shadow-hard-acid: 4px 4px 0px 0px #D2E823;
+}
+
+* {
+    border-color: #0A2A1F;
+}
+
+body {
+    background: #F8F4E8;
+    color: #0A2A1F;
+    font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-family: var(--font-display), cursive;
+    text-transform: uppercase;
+    letter-spacing: -0.02em;
+}
+
+.text-outline {
+    -webkit-text-stroke: 1px #0A2A1F;
+    color: transparent;
+}
+
+/* Animations */
+@keyframes marquee {
+    0% {
+        transform: translateX(0%);
+    }
+
+    100% {
+        transform: translateX(-100%);
+    }
+}
+
+.animate-marquee {
+    animation: marquee 25s linear infinite;
+}
+
+/* Base Component Styles */
+.btn-brutal {
+    @apply bg-ink text-paper px-6 py-3 rounded-xl border-2 border-ink font-display text-sm tracking-wide hover:bg-acid hover:text-ink transition-colors shadow-hard-sm hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-none;
+}
+
+.input-brutal {
+    @apply bg-paper border-2 border-ink rounded-xl px-4 py-3 font-sans font-medium outline-none focus:bg-white;
+}
+
+.card-brutal {
+    @apply bg-paper border-2 border-ink rounded-3xl overflow-hidden shadow-hard hover:shadow-hard-xl transition-all;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+.no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}

@@ -1,0 +1,18 @@
+[Unit]
+Description=Deal Flow Realtime Watcher — Supabase WebSocket trigger for scrape-engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=claw
+WorkingDirectory=/home/claw/jarvis/repos/deal-flow
+ExecStart=/home/claw/jarvis/repos/deal-flow/scripts/scrape-watcher.sh
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+Environment=HOME=/home/claw
+
+[Install]
+WantedBy=multi-user.target

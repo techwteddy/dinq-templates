@@ -1,0 +1,96 @@
+-- Insert 4 products into the products table
+-- Run this SQL in your Supabase SQL Editor
+
+INSERT INTO products (
+  name,
+  slug,
+  description,
+  short_description,
+  category,
+  price,
+  mrp,
+  stock_quantity,
+  sku,
+  weight,
+  images,
+  ingredients,
+  benefits,
+  usage_instructions,
+  is_active,
+  featured
+) VALUES
+(
+  'Ayurvedic Hair Oil',
+  'ayurvedic-hair-oil',
+  'HealMitra Ayurvedic Hair Oil is enriched with powerful herbs that nourish the scalp, strengthen roots, and promote healthy hair growth.',
+  'Enriched with powerful herbs that nourish the scalp, strengthen roots, and promote healthy hair growth.',
+  'Hair Care',
+  449,
+  599,
+  50,
+  'HM-HAIR-001',
+  '100ml',
+  ARRAY[]::text[],
+  ARRAY['Coconut Oil', 'Sesame Oil', 'Bhringraj', 'Brahmi', 'Amla', 'Neem', 'Hibiscus'],
+  ARRAY['Reduces hair fall', 'Strengthens hair roots', 'Improves scalp health', 'Enhances natural shine'],
+  E'1. Apply required quantity to scalp and hair\n2. Massage gently\n3. Leave for 1–2 hours or overnight\n4. Wash with mild shampoo\n5. Use 2–3 times a week',
+  true,
+  true
+),
+(
+  'Manjistha Soap',
+  'manjistha-soap',
+  'Manjistha Soap is known for its skin-purifying properties and helps promote clear, healthy skin.',
+  'Known for its skin-purifying properties and helps promote clear, healthy skin.',
+  'Skin Care',
+  149,
+  199,
+  100,
+  'HM-SOAP-001',
+  '80g',
+  ARRAY[]::text[],
+  NULL,
+  ARRAY['Helps reduce acne and blemishes', 'Supports natural skin glow', 'Gentle cleansing', 'Suitable for regular use'],
+  E'1. Apply on wet skin\n2. Massage gently\n3. Rinse thoroughly',
+  true,
+  true
+),
+(
+  'Chandan Soap',
+  'chandan-soap',
+  'Chandan Soap soothes the skin and provides a cooling, refreshing effect while maintaining natural moisture.',
+  'Soothes the skin and provides a cooling, refreshing effect while maintaining natural moisture.',
+  'Skin Care',
+  149,
+  199,
+  100,
+  'HM-SOAP-002',
+  '80g',
+  ARRAY[]::text[],
+  NULL,
+  ARRAY['Cooling and calming effect', 'Improves skin texture', 'Helps reduce skin irritation', 'Refreshes the skin'],
+  E'1. Apply on wet skin\n2. Massage gently\n3. Rinse thoroughly',
+  true,
+  true
+),
+(
+  'Herbal Face Serum',
+  'herbal-face-serum',
+  'A lightweight herbal serum formulated to nourish the skin, enhance glow, and maintain hydration.',
+  'A lightweight herbal serum formulated to nourish the skin, enhance glow, and maintain hydration.',
+  'Skin Care',
+  349,
+  449,
+  30,
+  'HM-SERUM-001',
+  '15ml',
+  ARRAY[]::text[],
+  NULL,
+  ARRAY['Improves skin radiance', 'Helps maintain moisture', 'Supports healthy skin tone'],
+  E'1. Apply a few drops on clean face\n2. Massage gently\n3. Use daily for best results',
+  true,
+  true
+);
+
+-- Verify the insertion
+SELECT * FROM products WHERE is_active = true ORDER BY created_at DESC;

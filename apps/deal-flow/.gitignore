@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.env.local
+.env*.local
+*.tsbuildinfo
+next-env.d.ts
+.vercel
+.credentials
+scripts/logs/
+scripts/cron-scrape.log
