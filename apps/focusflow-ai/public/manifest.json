@@ -1,0 +1,66 @@
+{
+  "name": "FocusFlow AI — Productivity Coach",
+  "short_name": "FocusFlow",
+  "description": "AI-powered productivity coach with focus timer, task manager, habit tracker, and smart insights.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "display_override": ["standalone", "fullscreen", "window-controls-overlay"],
+  "background_color": "#ffffff",
+  "theme_color": "#16a34a",
+  "orientation": "portrait",
+  "scope": "/",
+  "categories": ["productivity", "lifestyle"],
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/dashboard-mobile.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow"
+    },
+    {
+      "src": "/screenshots/dashboard-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Start Focus",
+      "short_name": "Focus",
+      "description": "Start a pomodoro focus session",
+      "url": "/focus",
+      "icons": [{ "src": "/icons/focus-96x96.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "My Tasks",
+      "short_name": "Tasks",
+      "description": "View and manage tasks",
+      "url": "/tasks",
+      "icons": [{ "src": "/icons/tasks-96x96.png", "sizes": "96x96" }]
+    }
+  ],
+  "related_applications": [
+    {
+      "platform": "play",
+      "url": "https://play.google.com/store/apps/details?id=app.vercel.focusflow",
+      "id": "app.vercel.focusflow"
+    }
+  ],
+  "prefer_related_applications": true
+}
