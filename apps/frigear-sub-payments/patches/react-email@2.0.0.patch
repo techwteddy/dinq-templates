@@ -1,0 +1,64 @@
+diff --git a/.hintrc b/.hintrc
+new file mode 100644
+index 0000000000000000000000000000000000000000..12c4655b4732d8e38a09907c04fcd7c2d62fad8e
+--- /dev/null
++++ b/.hintrc
+@@ -0,0 +1,8 @@
++{
++  "extends": [
++    "development"
++  ],
++  "hints": {
++    "typescript-config/strict": "off"
++  }
++}
+\ No newline at end of file
+diff --git a/cli/index.js b/cli/index.js
+index 15c8732e1bcf274d9d99ea8de55ed0e959fb5d16..69ef51c7eb11a02b0e2e5c95e0c95c92d5175735 100644
+--- a/cli/index.js
++++ b/cli/index.js
+@@ -508,7 +508,7 @@ var safeAsyncServerListen = function(server, port) {
+         });
+     });
+ };
+-var isRunningBuilt = __filename.endsWith("cli/index.js");
++var isRunningBuilt = __filename.endsWith(import_node_path3.default.join("cli", "index.js"));
+ var cliPacakgeLocation = isRunningBuilt ? import_node_path3.default.resolve(__dirname, "..") : import_node_path3.default.resolve(__dirname, "../../../..");
+ var startDevServer = function() {
+     var _ref = _async_to_generator(function(emailsDirRelativePath, staticBaseDirRelativePath, port) {
+diff --git a/package.json b/package.json
+index ec4fce832b5a2963e40a8a936805e1ddebef3aa0..4573534528055bfe9bf279d11a909d6f57e3dc9a 100644
+--- a/package.json
++++ b/package.json
+@@ -71,7 +71,7 @@
+   "devDependencies": {
+     "@types/fs-extra": "11.0.1",
+     "@types/mime-types": "2.1.4",
+-    "@types/node": "20.10.4",
++    "@types/node": "^20.11.30",
+     "@types/normalize-path": "3.0.2",
+     "@types/shelljs": "0.8.15",
+     "@vercel/style-guide": "5.1.0",
+diff --git a/src/utils/emails-directory-absolute-path.ts b/src/utils/emails-directory-absolute-path.ts
+index 256fd506049dbd7d83c188d3785c535633482ee5..ccbcb541710a16ad84ba4fcf6312500db81097b2 100644
+--- a/src/utils/emails-directory-absolute-path.ts
++++ b/src/utils/emails-directory-absolute-path.ts
+@@ -14,15 +14,15 @@ export const pathSeparator = process.env.NEXT_PUBLIC_OS_PATH_SEPARATOR! as
+ const normalizePath = (path: string) => {
+   let newPath = path;
+ 
+-  while (newPath.startsWith('./')) {
++  while (newPath.startsWith(`.${pathSeparator}`)) {
+     newPath = newPath.slice(2);
+   }
+ 
+-  while (newPath.startsWith('/')) {
++  while (newPath.startsWith(pathSeparator)) {
+     newPath = newPath.slice(1);
+   }
+ 
+-  while (newPath.endsWith('/')) {
++  while (newPath.endsWith(pathSeparator)) {
+     newPath = newPath.slice(0, -1);
+   }
+ 
