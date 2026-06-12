@@ -1,0 +1,70 @@
+import { createServerClient } from '@supabase/ssr'
+import { NextResponse, type NextRequest } from 'next/server'
+
+export async function proxy(request: NextRequest) {
+  let response = NextResponse.next({ request })
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          )
+          response = NextResponse.next({ request })
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options)
+          )
+        },
+      },
+    }
+  )
+
+  const { data: { user } } = await supabase.auth.getUser()
+
+  // Protect all /admin/* routes
+  if (request.nextUrl.pathname.startsWith('/admin')) {
+    // Allow access to the login page itself
+    if (request.nextUrl.pathname === '/admin/login') {
+      // If already logged in, redirect to dashboard
+      if (user) return NextResponse.redirect(new URL('/admin', request.url))
+      return response
+    }
+
+    // Not logged in → redirect to login
+    if (!user) {
+      return NextResponse.redirect(new URL('/admin/login', request.url))
+    }
+
+    // Verify the user is actually in the admins table
+    const { data: adminRecord } = await supabase
+      .from('admins')
+      .select('id')
+      .eq('user_id', user.id)
+      .single()
+
+    if (!adminRecord) {
+      // Authenticated but not an admin — sign out and redirect
+      await supabase.auth.signOut()
+      return NextResponse.redirect(new URL('/admin/login?error=unauthorized', request.url))
+    }
+  }
+
+  return response
+}
+
+export const config = {
+  // Run on every request so Supabase can refresh expired tokens via getUser().
+  // Without this, public pages served to a logged-in user can have stale
+  // sb-*-auth-token cookies that PostgREST rejects (401 JWT expired), making
+  // all DB queries return null and the page appear empty.
+  // Exclude Next.js internals and static file extensions to keep middleware fast.
+  matcher: [
+    '/((?!_next/static|_next/image|favicon\\.ico|icons|manifest\\.json|sw\\.js|workbox-|sitemap\\.xml|robots\\.txt).*)',
+  ],
+}

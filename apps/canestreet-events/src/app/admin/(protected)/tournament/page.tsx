@@ -1,0 +1,167 @@
+import { createServerSupabaseClient } from '@/lib/supabase/server'
+import type { Edition, GroupWithTeams, MatchWithTeams, TeamCategory } from '@/types'
+import EditionSwitcher from '@/components/admin/EditionSwitcher'
+import CategoryFilter from '@/components/admin/CategoryFilter'
+import TournamentGroups from '@/components/admin/TournamentGroups'
+import TournamentCalendar from '@/components/admin/TournamentCalendar'
+import TournamentBracket from '@/components/admin/TournamentBracket'
+import { Suspense } from 'react'
+import Link from 'next/link'
+import clsx from 'clsx'
+
+const categoryLabel: Record<TeamCategory, string> = {
+  open_m: 'Open Maschile', open_f: 'Open Femminile',
+  u14_m: 'U14 Maschile', u16_m: 'U16 Maschile', u18_m: 'U18 Maschile',
+}
+
+interface Props {
+  searchParams: Promise<{ category?: string; edition?: string; tab?: string }>
+}
+
+export default async function AdminTorneoPage({ searchParams }: Props) {
+  const sp = await searchParams
+  const supabase = await createServerSupabaseClient()
+
+  // Fetch all editions for the switcher
+  const { data: allEditions } = await supabase
+    .from('editions')
+    .select('id, year, title, is_current, registration_open')
+    .order('year', { ascending: false })
+    .returns<Pick<Edition, 'id' | 'year' | 'title' | 'is_current' | 'registration_open'>[]>()
+
+  const editions = allEditions ?? []
+  let activeEdition = sp.edition
+    ? editions.find(e => e.id === sp.edition)
+    : editions.find(e => e.is_current)
+  if (!activeEdition && editions.length > 0) activeEdition = editions[0]
+
+  const tab = sp.tab ?? 'gironi'
+  const category = (sp.category as TeamCategory) ?? 'open_m'
+
+  let groups: GroupWithTeams[] = []
+  let approvedTeams: { id: string; name: string; category: string }[] = []
+  let hasGroupMatches = false
+  let matches: MatchWithTeams[] = []
+
+  if (activeEdition) {
+    const { data: g } = await supabase
+      .from('groups')
+      .select('*, group_teams(*, teams(id, name))')
+      .eq('edition_id', activeEdition.id)
+      .eq('category', category)
+      .order('sort_order')
+      .returns<GroupWithTeams[]>()
+    groups = g ?? []
+
+    const { data: teams } = await supabase
+      .from('teams')
+      .select('id, name, category')
+      .eq('edition_id', activeEdition.id)
+      .eq('status', 'approved')
+      .order('name')
+    approvedTeams = teams ?? []
+
+    const { count } = await supabase
+      .from('matches')
+      .select('id', { count: 'exact', head: true })
+      .eq('edition_id', activeEdition.id)
+      .eq('category', category)
+      .eq('phase', 'group')
+    hasGroupMatches = (count ?? 0) > 0
+
+    const { data: matchData } = await supabase
+      .from('matches')
+      .select('*, team_home:teams!matches_team_home_id_fkey(id, name), team_away:teams!matches_team_away_id_fkey(id, name), group:groups!matches_group_id_fkey(id, name)')
+      .eq('edition_id', activeEdition.id)
+      .order('scheduled_at', { ascending: true, nullsFirst: false })
+      .order('sort_order')
+      .returns<MatchWithTeams[]>()
+    matches = matchData ?? []
+  }
+
+  const tabs = [
+    { key: 'gironi', label: 'Gironi' },
+    { key: 'calendario', label: 'Calendario' },
+    { key: 'tabellone', label: 'Tabellone' },
+  ]
+
+  // Suppress unused variable warning — categoryLabel is available for future use
+  void categoryLabel
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-6 flex-wrap gap-4">
+        <div>
+          <p className="text-brand-orange font-display uppercase tracking-widest text-xs mb-1">Torneo</p>
+          <h1 className="font-display font-bold uppercase text-3xl text-court-white">Gestione Torneo</h1>
+          {activeEdition && (
+            <div className="flex items-center gap-3 mt-2 flex-wrap">
+              <Suspense>
+                <EditionSwitcher editions={editions} currentEditionId={activeEdition.id} />
+              </Suspense>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Category filter */}
+      <div className="mb-4">
+        <Suspense>
+          <CategoryFilter />
+        </Suspense>
+      </div>
+
+      {/* Tab switcher */}
+      <div className="flex gap-0 border-b border-court-border mb-6">
+        {tabs.map(t => (
+          <Link
+            key={t.key}
+            href={`/admin/tournament?${new URLSearchParams({
+              ...(sp.edition ? { edition: sp.edition } : {}),
+              ...(sp.category ? { category: sp.category } : {}),
+              tab: t.key,
+            }).toString()}`}
+            className={clsx(
+              'px-5 py-2.5 font-display uppercase tracking-wide text-sm border-b-2 -mb-px transition-colors',
+              tab === t.key
+                ? 'border-brand-orange text-brand-orange'
+                : 'border-transparent text-court-gray hover:text-court-white'
+            )}
+          >
+            {t.label}
+          </Link>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {!activeEdition ? (
+        <div className="card p-10 text-center">
+          <p className="text-court-gray">Nessuna edizione disponibile.</p>
+        </div>
+      ) : tab === 'gironi' ? (
+        <TournamentGroups
+          editionId={activeEdition.id}
+          category={category}
+          groups={groups}
+          approvedTeams={approvedTeams}
+          hasGroupMatches={hasGroupMatches}
+        />
+      ) : tab === 'calendario' ? (
+        <TournamentCalendar
+          editionId={activeEdition.id}
+          matches={matches}
+          category={sp.category as TeamCategory | undefined}
+        />
+      ) : (
+        <TournamentBracket
+          editionId={activeEdition.id}
+          category={category}
+          bracketMatches={matches.filter(m => m.category === category && m.phase === 'bracket')}
+          groupMatches={matches.filter(m => m.category === category && m.phase === 'group')}
+          groups={groups}
+          approvedTeams={approvedTeams}
+        />
+      )}
+    </div>
+  )
+}

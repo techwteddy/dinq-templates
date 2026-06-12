@@ -1,0 +1,262 @@
+'use client';
+
+import Image from 'next/image';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
+import { Button } from '@/components/ui/button';
+import { MenuIcon, XIcon } from 'lucide-react';
+import type { User } from '@supabase/supabase-js';
+
+export function Header() {
+  const pathname = usePathname();
+  const [user, setUser] = useState<User | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Helper to check if a link is active
+  const isActive = (href: string) => {
+    if (href === '/') return pathname === '/';
+    return pathname.startsWith(href);
+  };
+
+  // Get link class based on active state
+  const getLinkClass = (href: string, baseClass: string = '') => {
+    const active = isActive(href);
+    return `text-sm transition-colors ${baseClass} ${
+      active
+        ? 'text-[var(--color-prompt)] font-medium'
+        : 'text-[var(--color-cloud)]/70 hover:text-[var(--color-prompt)]'
+    }`;
+  };
+
+  const getMobileLinkClass = (href: string) => {
+    const active = isActive(href);
+    return `rounded-lg px-3 py-3 transition-colors ${
+      active
+        ? 'bg-[var(--color-prompt)]/10 text-[var(--color-prompt)] font-medium'
+        : 'text-[var(--color-cloud)]/70 hover:bg-[var(--color-cloud)]/10 hover:text-[var(--color-prompt)]'
+    }`;
+  };
+
+  useEffect(() => {
+    const supabase = createClient();
+
+    async function getUser() {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('is_admin')
+          .eq('id', user.id)
+          .single();
+
+        if (profile) {
+          setIsAdmin(profile.is_admin || false);
+        }
+      }
+      setIsLoading(false);
+    }
+
+    getUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleSignOut = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    setMobileMenuOpen(false);
+    window.location.href = '/';
+  };
+
+  const closeMobileMenu = () => setMobileMenuOpen(false);
+
+  return (
+    <header className="border-b border-[var(--color-cloud)]/10 bg-[var(--color-core)]">
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6 sm:py-4">
+        <Link href="/" className="flex items-center gap-2 text-[var(--color-cloud)]">
+          <Image src="/icon.svg" alt="Logo" width={32} height={32} className="h-8 w-8 brightness-0 invert" />
+          <span className="font-['Raptor'] text-lg sm:text-xl">RateMyBaliBuilder</span>
+        </Link>
+
+
+        {/* Desktop Navigation */}
+        <nav className="hidden items-center gap-6 md:flex">
+          <Link
+            href="/builders"
+            className={getLinkClass('/builders')}
+          >
+            Browse Builders
+          </Link>
+          <Link
+            href="/guide"
+            className={getLinkClass('/guide')}
+          >
+            Investment Guide
+          </Link>
+          {isLoading ? (
+            <div className="h-8 w-20 rounded bg-[var(--color-cloud)]/10 animate-pulse" />
+          ) : user ? (
+            <>
+              {isAdmin && (
+                <Link
+                  href="/admin"
+                  className="text-sm font-medium text-[var(--color-prompt)] transition-colors hover:text-[var(--color-prompt)]/80"
+                >
+                  Admin
+                </Link>
+              )}
+              <Link
+                href="/add-builder"
+                className={getLinkClass('/add-builder')}
+              >
+                Add Builder
+              </Link>
+              <Link
+                href="/account"
+                className={getLinkClass('/account')}
+              >
+                Account
+              </Link>
+              <button
+                onClick={handleSignOut}
+                className="text-sm text-[var(--color-cloud)]/70 transition-colors hover:text-[var(--color-prompt)]"
+              >
+                Sign Out
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/add-builder"
+                className={getLinkClass('/add-builder')}
+              >
+                Add Builder
+              </Link>
+              <Button asChild size="sm" className="bg-[var(--color-prompt)] text-[var(--color-core)] hover:bg-[var(--color-prompt)]/90">
+                <Link href="/login">
+                  Sign In
+                </Link>
+              </Button>
+            </>
+          )}
+        </nav>
+
+        {/* Mobile Menu Button */}
+        <button
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--color-cloud)] md:hidden"
+          aria-label="Toggle menu"
+        >
+          {mobileMenuOpen ? (
+            <XIcon className="h-6 w-6" />
+          ) : (
+            <MenuIcon className="h-6 w-6" />
+          )}
+        </button>
+      </div>
+
+      {/* Mobile Navigation */}
+      {mobileMenuOpen && (
+        <nav className="border-t border-[var(--color-cloud)]/10 bg-[var(--color-core)] px-4 py-4 md:hidden">
+          <div className="flex flex-col gap-1">
+            <Link
+              href="/builders"
+              onClick={closeMobileMenu}
+              className={getMobileLinkClass('/builders')}
+            >
+              Browse Builders
+            </Link>
+            <Link
+              href="/guide"
+              onClick={closeMobileMenu}
+              className={getMobileLinkClass('/guide')}
+            >
+              Investment Guide
+            </Link>
+            {isLoading ? (
+              <div className="px-3 py-3">
+                <div className="h-4 w-32 rounded bg-[var(--color-cloud)]/10 animate-pulse" />
+              </div>
+            ) : user ? (
+              <>
+                {isAdmin && (
+                  <>
+                    <Link
+                      href="/admin"
+                      onClick={closeMobileMenu}
+                      className="rounded-lg px-3 py-3 font-medium text-[var(--color-prompt)] transition-colors hover:bg-[var(--color-cloud)]/10"
+                    >
+                      Admin
+                    </Link>
+                    <div className="my-2 h-px bg-[var(--color-cloud)]/10" />
+                  </>
+                )}
+                <Link
+                  href="/add-builder"
+                  onClick={closeMobileMenu}
+                  className={getMobileLinkClass('/add-builder')}
+                >
+                  Add Builder
+                </Link>
+                <Link
+                  href="/submit-review"
+                  onClick={closeMobileMenu}
+                  className={getMobileLinkClass('/submit-review')}
+                >
+                  Submit Review
+                </Link>
+                <div className="my-2 h-px bg-[var(--color-cloud)]/10" />
+                <Link
+                  href="/account"
+                  onClick={closeMobileMenu}
+                  className={getMobileLinkClass('/account')}
+                >
+                  Account
+                </Link>
+                <button
+                  onClick={handleSignOut}
+                  className="rounded-lg px-3 py-3 text-left text-[var(--color-cloud)]/70 transition-colors hover:bg-[var(--color-cloud)]/10 hover:text-[var(--color-prompt)]"
+                >
+                  Sign Out
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/add-builder"
+                  onClick={closeMobileMenu}
+                  className={getMobileLinkClass('/add-builder')}
+                >
+                  Add Builder
+                </Link>
+                <div className="my-2 h-px bg-[var(--color-cloud)]/10" />
+                <Link
+                  href="/login"
+                  onClick={closeMobileMenu}
+                  className="rounded-lg px-3 py-3 text-[var(--color-cloud)]/70 transition-colors hover:bg-[var(--color-cloud)]/10 hover:text-[var(--color-prompt)]"
+                >
+                  Sign In
+                </Link>
+                <Button asChild className="mt-2 bg-[var(--color-prompt)] text-[var(--color-core)] hover:bg-[var(--color-prompt)]/90">
+                  <Link href="/signup" onClick={closeMobileMenu}>
+                    Sign Up
+                  </Link>
+                </Button>
+              </>
+            )}
+          </div>
+        </nav>
+      )}
+    </header>
+  );
+}
