@@ -1,0 +1,102 @@
+import { notFound, redirect } from "next/navigation";
+import { getServerClient } from "@/lib/supabase/server";
+import { getAdminClient } from "@/lib/supabase/admin";
+import { getCurrentUser } from "@/lib/auth/get-user";
+import { PayPanel } from "@/components/portal-student/pay-panel";
+import { requireTenantContext } from "@/lib/tenant";
+import { featureFlags, env } from "@/lib/env";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export default async function PayPage({ params }: { params: Promise<{ orderId: string }> }) {
+  const { orderId } = await params;
+  const { tenant } = await requireTenantContext();
+
+  const user = await getCurrentUser();
+  if (!user) redirect(`/c/${tenant.slug}/login?next=/c/${tenant.slug}/pay/${orderId}`);
+
+  const supabase = await getServerClient(tenant.id);
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, short_code, total_paise, status, payment_expires_at, customer_name")
+    .eq("id", orderId)
+    .eq("tenant_id", tenant.id)
+    .eq("user_id", user.id)
+    .maybeSingle<{
+      id: string;
+      short_code: string;
+      total_paise: number;
+      status: string;
+      payment_expires_at: string | null;
+      customer_name: string | null;
+    }>();
+  if (!order) notFound();
+  if (order.status !== "pending_payment") {
+    redirect(`/c/${tenant.slug}/track/${orderId}`);
+  }
+
+  const { data: lines } = await supabase
+    .from("order_items")
+    .select("id, name_snapshot, qty, price_paise_snapshot, diet_snapshot")
+    .eq("order_id", orderId)
+    .returns<{
+      id: string;
+      name_snapshot: string;
+      qty: number;
+      price_paise_snapshot: number;
+      diet_snapshot: "veg" | "nonveg" | "egg";
+    }[]>();
+
+  // Per-tenant payment rail (migration 0024). Drives the pay UI: direct_upi shows
+  // the UPI QR and drops the order into the kitchen queue when the student taps to
+  // pay (no "I've Paid" button); razorpay would drive the gateway checkout.
+  const { data: tModeRow } = await supabase
+    .from("tenants")
+    .select("payment_mode")
+    .eq("id", tenant.id)
+    .maybeSingle<{ payment_mode: string }>();
+  const paymentMode: "direct_upi" | "razorpay" =
+    tModeRow?.payment_mode === "razorpay" ? "razorpay" : "direct_upi";
+
+  // Only enforce the UPI VPA requirement for direct_upi mode.
+  // Razorpay-mode tenants don't need a UPI VPA — blocking them here was a bug
+  // that would prevent any Razorpay-only canteen from accepting payments.
+  if (paymentMode === "direct_upi" && !tenant.upi_vpa) {
+    redirect(`/c/${tenant.slug}/menu?msg=no-upi`);
+  }
+
+  // isSimMode: dev-only simulate button (true only when live Razorpay keys are
+  // absent). Independent of payment_mode — it never shows in production.
+  const isSimMode = !featureFlags.razorpayLive;
+
+  // For Razorpay mode: fetch the razorpay_order_id so the checkout can reference it.
+  // Server-side only — never expose raw payment IDs to client without this guard.
+  let razorpayOrderId: string | null = null;
+  if (paymentMode === "razorpay" && featureFlags.razorpayLive) {
+    const adminClient = getAdminClient(tenant.id);
+    const { data: payRow } = await adminClient
+      .from("payments")
+      .select("razorpay_order_id")
+      .eq("order_id", orderId)
+      .eq("tenant_id", tenant.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ razorpay_order_id: string | null }>();
+    razorpayOrderId = payRow?.razorpay_order_id ?? null;
+  }
+
+  return (
+    <PayPanel
+      tenantSlug={tenant.slug}
+      tenantName={tenant.name}
+      tenantUpi={tenant.upi_vpa ?? ""}
+      order={order}
+      lines={lines ?? []}
+      isSimMode={isSimMode}
+      paymentMode={paymentMode}
+      razorpayOrderId={razorpayOrderId}
+      razorpayKeyId={paymentMode === "razorpay" ? (env.RAZORPAY_KEY_ID ?? null) : null}
+    />
+  );
+}

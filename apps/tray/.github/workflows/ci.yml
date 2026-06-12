@@ -1,0 +1,35 @@
+﻿name: ci
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://test.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: anon_test_key_placeholder_32chars
+      - run: pnpm build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://mepowrsrbjddaqfvzvtc.supabase.co' }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_e0_d-CRp71kmQbDbQmO1BQ_dGxGgNKz' }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          QSTASH_TOKEN: ${{ secrets.QSTASH_TOKEN }}
+          QSTASH_CURRENT_SIGNING_KEY: ${{ secrets.QSTASH_CURRENT_SIGNING_KEY }}
+          QSTASH_NEXT_SIGNING_KEY: ${{ secrets.QSTASH_NEXT_SIGNING_KEY }}
+          APP_URL: https://trayy.vercel.app
+          DEFAULT_TENANT_SLUG: aditya
