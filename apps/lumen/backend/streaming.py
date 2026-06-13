@@ -1,0 +1,222 @@
+import asyncio
+import json
+import uuid
+
+from agent.graph import lumen_graph
+from agent.nodes import MAX_REFLECTION_ITERATIONS, PipelineCancelled
+from auth.keys import get_user_key_async
+from evals.judge import score_draft_async
+from evals.source_eval import evaluate_sources
+from evals.store import save_run
+from redis_services import (
+    store_run_state,
+    get_run_state,
+    is_cancelled,
+    clear_cancelled,
+)
+
+
+def _sse(event: str, data: dict) -> str:
+    """Format a server-sent event."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _strip_secrets(state: dict) -> dict:
+    """Remove transient/sensitive fields before persisting state."""
+    return {k: v for k, v in state.items() if not k.startswith("_")}
+
+
+def _build_node_event(
+    node_name: str,
+    node_output: dict,
+    state: dict,
+    pre_iteration: int | None = None,
+) -> dict:
+    """Build the SSE event payload for a node_complete event."""
+    iteration = pre_iteration if pre_iteration is not None else state.get("iteration", 0)
+    event_data = {
+        "node": node_name,
+        "timing_ms": node_output.get("node_timings", {}).get(node_name),
+        "iteration": iteration,
+    }
+
+    if node_name == "planner":
+        queries = state.get("search_queries", [])
+        event_data["meta"] = {"queries": len(queries), "preview": queries}
+    elif node_name == "searcher":
+        new_results = node_output.get("search_results", [])
+        event_data["meta"] = {
+            "sources": len(new_results),
+            "preview": [{"title": r["title"], "url": r["url"]} for r in new_results[:6]],
+        }
+    elif node_name == "summariser":
+        new_summaries = node_output.get("summaries", [])
+        event_data["meta"] = {"summaries": len(new_summaries)}
+    elif node_name == "outliner":
+        outline = state.get("outline", "")
+        event_data["meta"] = {
+            "sections": outline.count("## ") if outline else 0,
+            "preview": outline[:500] if outline else "",
+        }
+    elif node_name == "drafter":
+        draft = state.get("draft", "")
+        event_data["meta"] = {"words": len(draft.split()) if draft else 0}
+    elif node_name == "reflection":
+        event_data["reflection_action"] = state.get("reflection_action", "accept")
+        event_data["critique"] = state.get("reflection", "")
+
+    return event_data
+
+
+async def _resolve_byok(state: dict, user_id: str, byok_keys: dict | None) -> None:
+    """Apply BYOK keys and provider to state in-place — from request or saved key."""
+    if byok_keys:
+        state.update(byok_keys)
+    if not state.get("_byok_anthropic_key"):
+        saved = await get_user_key_async(user_id)
+        if saved:
+            state["_byok_anthropic_key"] = saved["key"]
+            if not state.get("_llm_provider"):
+                state["_llm_provider"] = saved.get("provider", "anthropic")
+
+
+async def _stream_pipeline(state: dict, run_id: str, user_id: str):
+    """Core streaming loop shared by research and refine."""
+    yield _sse("start", {"run_id": run_id, "topic": state["topic"], "domain": state.get("domain", "general")})
+
+    try:
+        cancelled = False
+        async for chunk in lumen_graph.astream(state, stream_mode="updates"):
+            if is_cancelled(run_id):
+                clear_cancelled(run_id)
+                cancelled = True
+                yield _sse("cancelled", {"run_id": run_id})
+                break
+            for node_name, node_output in chunk.items():
+                if not node_output:
+                    continue
+                pre_iteration = state.get("iteration", 0)
+                state.update(node_output)
+                yield _sse("node_complete", _build_node_event(node_name, node_output, state, pre_iteration))
+                await asyncio.sleep(0)
+
+        if cancelled:
+            return
+
+        yield _sse("eval_start", {})
+        sources = [r["url"] for r in state.get("search_results", [])]
+        byok_key = state.get("_byok_anthropic_key")
+        llm_provider = state.get("_llm_provider")
+        scores = await score_draft_async(state["topic"], state.get("draft", ""), sources, api_key=byok_key, provider=llm_provider)
+        source_eval = evaluate_sources(sources, state.get("domain", "general"))
+        scores["source_eval"] = source_eval
+        await save_run(
+            run_id, user_id, state["topic"], state.get("draft", ""), sources,
+            scores, state.get("node_timings", {}), state.get("token_counts", {}),
+        )
+        store_run_state(run_id, _strip_secrets(state))
+
+        yield _sse("complete", {
+            "draft": state.get("draft", ""),
+            "sources": sources,
+            "scores": scores,
+            "node_timings": state.get("node_timings", {}),
+            "token_counts": state.get("token_counts", {}),
+            "run_id": run_id,
+        })
+    except PipelineCancelled:
+        clear_cancelled(run_id)
+        yield _sse("cancelled", {"run_id": run_id})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        yield _sse("error", {"code": _classify_error(e), "detail": str(e)})
+
+
+def _classify_error(e: Exception) -> str:
+    """Classify an exception into a user-facing error code."""
+    msg = str(e).lower()
+    err_type = type(e).__name__.lower()
+
+    # Database errors (check before LLM — some DB libs have "API" in class names)
+    if any(k in msg for k in ("supabase", "postgres", "database")):
+        return "database"
+
+    # Auth / key errors
+    if any(k in msg for k in ("authentication", "unauthorized", "token", "jwt", "clerk")):
+        return "auth"
+
+    # Search provider errors
+    if any(k in msg for k in ("tavily", "pubmed", "courtlistener", "edgar", "search")) or \
+       any(k in err_type for k in ("httpx", "connection", "timeout")):
+        return "search_provider"
+
+    # Anthropic / LLM errors (last — most generic patterns)
+    if any(k in msg for k in ("anthropic", "claude", "overloaded", "rate_limit")) or \
+       any(k in err_type for k in ("anthropic",)):
+        return "llm"
+
+    return "unknown"
+
+
+async def stream_research(
+    topic: str,
+    user_id: str,
+    domain: str = "general",
+    byok_keys: dict | None = None,
+):
+    """Stream a new research pipeline run."""
+    run_id = str(uuid.uuid4())
+    state = {
+        "topic": topic,
+        "domain": domain,
+        "search_queries": [],
+        "search_results": [],
+        "summarised_urls": [],
+        "summaries": [],
+        "outline": "",
+        "draft": "",
+        "reflection": "",
+        "reflections": [],
+        "reflection_action": "accept",
+        "should_continue": False,
+        "iteration": 0,
+        "node_timings": {},
+        "token_counts": {},
+        "eval_scores": None,
+        "run_id": run_id,
+        "_user_id": user_id,
+    }
+    await _resolve_byok(state, user_id, byok_keys)
+    async for chunk in _stream_pipeline(state, run_id, user_id):
+        yield chunk
+
+
+async def stream_refine(
+    run_id: str,
+    user_id: str,
+    byok_keys: dict | None = None,
+    instructions: str | None = None,
+):
+    """Stream one additional iteration on an existing research run.
+
+    If instructions are provided, the reflection node uses them as critique
+    and routes to 'revise' — the drafter revises based on the user's words.
+    Without instructions, behaves as before (generic Dig Deeper).
+    """
+    state = get_run_state(run_id)
+    if not state:
+        yield _sse("error", {"code": "database", "detail": "Run not found or expired"})
+        return
+
+    state["should_continue"] = False
+    state["iteration"] = 0
+    state["_skip_reflection_loop"] = True  # After directed revision, auto-accept on next reflection
+    state["_user_id"] = user_id  # Re-inject — stripped before persistence
+
+    if instructions:
+        state["_user_instructions"] = instructions
+
+    await _resolve_byok(state, user_id, byok_keys)
+    async for chunk in _stream_pipeline(state, run_id, user_id):
+        yield chunk
