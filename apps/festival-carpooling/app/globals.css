@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f0ead8;
+  --foreground: #221c11;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-feature-settings: 'rlig' 1, 'calt' 1;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Grain texture overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E");
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+textarea,
+select {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Ride card subtle tilt — organic feel */
+.ride-card-wrap:nth-child(odd)  { transform: rotate(-0.35deg); }
+.ride-card-wrap:nth-child(even) { transform: rotate(0.25deg); }
+.ride-card-wrap { transition: transform 0.2s, box-shadow 0.2s; }
+.ride-card-wrap:hover { transform: rotate(0deg) !important; }
