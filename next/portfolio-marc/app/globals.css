@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-start-rgb: 214, 219, 220;
+  --background-end-rgb: 255, 255, 255;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground-rgb: 255, 255, 255;
+    --background-start-rgb: 0, 0, 0;
+    --background-end-rgb: 0, 0, 0;
+  }
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: rgb(var(--background-start-rgb));
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Customize Flowise chatbot branding */
+[class*="flowise"] [class*="powered"],
+[class*="flowise"] a[href*="flowise"],
+[class*="flowise"] text[fill*="Flowise"] {
+  font-size: 0.75rem;
+}
+
+/* Hide default Flowise branding and add custom */
+[class*="flowise"] [class*="powered"]::after {
+  content: "Powered by Marc Lawrence Magadan";
+  display: block;
+}
+
+[class*="flowise"] [class*="powered"] {
+  font-size: 0;
+}
+
+[class*="flowise"] [class*="powered"]::after {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+
