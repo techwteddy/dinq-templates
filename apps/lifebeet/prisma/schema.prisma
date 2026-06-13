@@ -1,0 +1,177 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users            User[]
+  exchangeRates    ExchangeRate[]
+  categories       Category[]
+  expenses         Expense[]
+  incomes          Income[]
+  fixedExpenses    FixedExpense[]
+  variableExpenses VariableExpense[]
+  purchases        Purchase[]
+  comparisons      Comparison[]
+
+  @@map("tenants")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  tenantId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("users")
+}
+
+model ExchangeRate {
+  id        String   @id @default(uuid())
+  tenantId  String
+  fromCurrency String @default("USD")
+  toCurrency   String @default("PYG")
+  rate      Float
+  date      DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("exchange_rates")
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  type      String // "expense" or "income"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  expenses          Expense[]
+  incomes           Income[]
+  fixedExpenses     FixedExpense[]
+  variableExpenses  VariableExpense[]
+
+  @@map("categories")
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  tenantId    String
+  categoryId  String
+  description String
+  amount      Float
+  currency    String   @default("PYG")
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@map("expenses")
+}
+
+model Income {
+  id          String   @id @default(uuid())
+  tenantId    String
+  categoryId  String
+  description String
+  amount      Float
+  currency    String   @default("PYG")
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@map("incomes")
+}
+
+model FixedExpense {
+  id          String   @id @default(uuid())
+  tenantId    String
+  categoryId  String
+  description String
+  amount      Float
+  currency    String   @default("PYG")
+  frequency   String   @default("monthly") // "monthly", "yearly", etc.
+  startDate   DateTime @default(now())
+  endDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@map("fixed_expenses")
+}
+
+model VariableExpense {
+  id          String   @id @default(uuid())
+  tenantId    String
+  categoryId  String
+  description String
+  amount      Float
+  currency    String   @default("PYG")
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@map("variable_expenses")
+}
+
+model Purchase {
+  id          String   @id @default(uuid())
+  tenantId    String
+  description String
+  amount      Float
+  currency    String   @default("PYG")
+  store       String?
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("purchases")
+}
+
+model Comparison {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  period      String   // "monthly", "yearly", etc.
+  startDate   DateTime
+  endDate     DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("comparisons")
+}
