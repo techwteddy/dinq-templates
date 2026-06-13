@@ -1,0 +1,32 @@
+{
+  "name": "nutri-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "test:nutrition": "tsx src/lib/nutrition/__tests__/engine.test.ts",
+    "warm-cache:foods": "tsx scripts/warm-cache.ts",
+    "audit:aliases": "tsx scripts/audit-aliases.ts"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.4.1",
+    "@supabase/supabase-js": "^2.105.4",
+    "next": "^14.2.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "tsx": "^4.15.7",
+    "typescript": "^5"
+  }
+}

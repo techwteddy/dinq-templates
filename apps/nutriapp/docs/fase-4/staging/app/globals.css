@@ -1,0 +1,280 @@
+/**
+ * app/globals.css
+ *
+ * Estilos globales — NutriApp Fase 4
+ * Dark-first, mobile-first, con tokens de diseño como variables CSS.
+ */
+
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+/* ── Variables de diseño ──────────────────────────────────── */
+:root {
+  /* Colores primarios */
+  --color-primary:       #16a34a; /* green-600 */
+  --color-primary-light: #22c55e; /* green-500 */
+  --color-primary-dark:  #15803d; /* green-700 */
+
+  /* Superficies */
+  --color-bg:            #0f172a; /* slate-950 */
+  --color-surface:       #1e293b; /* slate-800 */
+  --color-surface-2:     #334155; /* slate-700 */
+  --color-border:        #334155; /* slate-700 */
+
+  /* Texto */
+  --color-text:          #f1f5f9; /* slate-100 */
+  --color-text-muted:    #94a3b8; /* slate-400 */
+  --color-text-faint:    #475569; /* slate-600 */
+
+  /* Estado */
+  --color-success:       #22c55e;
+  --color-warning:       #f59e0b;
+  --color-error:         #ef4444;
+  --color-info:          #3b82f6;
+
+  /* Macros */
+  --color-kcal:          #f97316; /* orange */
+  --color-protein:       #3b82f6; /* blue */
+  --color-carbs:         #f59e0b; /* amber */
+  --color-fat:           #a855f7; /* purple */
+  --color-fiber:         #22c55e; /* green */
+
+  /* Espaciado base */
+  --radius-sm:  0.5rem;   /* 8px */
+  --radius-md:  0.75rem;  /* 12px */
+  --radius-lg:  1rem;     /* 16px */
+  --radius-xl:  1.25rem;  /* 20px */
+  --radius-2xl: 1.5rem;   /* 24px */
+
+  /* Sombras */
+  --shadow-sm:  0 1px 3px 0 rgb(0 0 0 / 0.4);
+  --shadow-md:  0 4px 16px 0 rgb(0 0 0 / 0.5);
+  --shadow-lg:  0 8px 32px 0 rgb(0 0 0 / 0.6);
+
+  /* Tipografía */
+  --font-sans:  var(--font-inter), system-ui, -apple-system, sans-serif;
+
+  /* Transiciones */
+  --transition-fast:   150ms ease;
+  --transition-normal: 250ms ease;
+
+  /* Barra de estado segura (notch) */
+  --safe-top:    env(safe-area-inset-top,    0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left,   0px);
+  --safe-right:  env(safe-area-inset-right,  0px);
+}
+
+/* ── Reset y base ────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Scroll suave en iOS */
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh; /* dvh para móvil con barra de navegador */
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  /* Anti-aliasing */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Paddings seguros para notch */
+  padding-left:   var(--safe-left);
+  padding-right:  var(--safe-right);
+}
+
+/* Evitar subrayado azul al tocar en iOS */
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+/* Scrollbar fina en desktop */
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-surface-2); border-radius: 3px; }
+
+/* ── Utilidades personalizadas ──────────────────────────── */
+@layer utilities {
+
+  /* Área segura para bottom nav */
+  .pb-safe {
+    padding-bottom: calc(var(--safe-bottom) + 4rem); /* 4rem = altura nav */
+  }
+
+  /* Padding top para status bar en PWA standalone */
+  .pt-safe {
+    padding-top: calc(var(--safe-top) + 0.5rem);
+  }
+
+  /* Superficies con borde sutil */
+  .surface {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+  }
+
+  .surface-2 {
+    background-color: var(--color-surface-2);
+    border-radius: var(--radius-lg);
+  }
+
+  /* Texto muted */
+  .text-muted { color: var(--color-text-muted); }
+  .text-faint { color: var(--color-text-faint); }
+
+  /* Macros colores */
+  .text-kcal    { color: var(--color-kcal); }
+  .text-protein { color: var(--color-protein); }
+  .text-carbs   { color: var(--color-carbs); }
+  .text-fat     { color: var(--color-fat); }
+  .text-fiber   { color: var(--color-fiber); }
+
+  /* Animación de entrada */
+  .animate-in-up {
+    animation: slideInUp 200ms ease forwards;
+  }
+
+  @keyframes slideInUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Shimmer skeleton */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--color-surface) 25%,
+      var(--color-surface-2) 50%,
+      var(--color-surface) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: var(--radius-md);
+  }
+
+  @keyframes shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+}
+
+/* ── Componentes base ────────────────────────────────────── */
+@layer components {
+
+  /* Card base */
+  .card {
+    @apply surface p-4 transition-shadow;
+  }
+
+  /* Botón primario */
+  .btn-primary {
+    @apply rounded-2xl bg-green-600 px-5 py-3 text-sm font-semibold
+           text-white transition hover:bg-green-500 active:scale-95
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Botón secundario */
+  .btn-secondary {
+    @apply rounded-2xl border border-slate-700 px-5 py-3 text-sm
+           font-medium text-slate-300 transition hover:border-slate-500
+           hover:text-slate-100 active:scale-95;
+  }
+
+  /* Input */
+  .input {
+    @apply w-full rounded-xl border border-slate-700 bg-slate-800
+           px-4 py-3 text-sm text-slate-100 placeholder-slate-500
+           outline-none transition
+           focus:border-green-600 focus:ring-1 focus:ring-green-600;
+  }
+
+  /* Label */
+  .label {
+    @apply block text-xs font-medium text-slate-400 mb-1;
+  }
+
+  /* Bottom nav base */
+  .bottom-nav {
+    @apply fixed bottom-0 left-0 right-0 z-40 flex items-center
+           justify-around border-t border-slate-800 bg-slate-950/90
+           backdrop-blur-sm;
+    padding-bottom: var(--safe-bottom);
+    min-height: calc(4rem + var(--safe-bottom));
+  }
+
+  /* Nav item */
+  .nav-item {
+    @apply flex flex-col items-center gap-0.5 flex-1 py-2 text-slate-500
+           transition-colors hover:text-slate-300;
+  }
+
+  .nav-item.active {
+    @apply text-green-400;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+
+  .badge-green  { @apply badge bg-green-900/50 text-green-400; }
+  .badge-amber  { @apply badge bg-amber-900/50 text-amber-400; }
+  .badge-red    { @apply badge bg-red-900/50 text-red-400; }
+  .badge-slate  { @apply badge bg-slate-800 text-slate-400; }
+}
+
+/* ── Progress bar de macros ─────────────────────────────── */
+.macro-bar {
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--color-surface-2);
+}
+
+.macro-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width var(--transition-normal);
+}
+
+/* ── Modo standalone (PWA instalada) ────────────────────── */
+@media (display-mode: standalone) {
+  /* Usar height real sin barra de navegador */
+  body {
+    min-height: 100dvh;
+  }
+
+  /* La bottom nav necesita más espacio en iOS standalone */
+  .bottom-nav {
+    padding-bottom: max(var(--safe-bottom), 12px);
+  }
+}
+
+/* ── Reducir animaciones si el usuario lo prefiere ───────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

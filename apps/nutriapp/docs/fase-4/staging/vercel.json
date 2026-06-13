@@ -1,0 +1,25 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/push/cron?type=desayuno",
+      "schedule": "30 11 * * *"
+    },
+    {
+      "path": "/api/push/cron?type=almuerzo",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/push/cron?type=cena",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/push/cron?type=cierreDia",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/push/cron?type=pesoCorporal",
+      "schedule": "0 13 * * 1"
+    }
+  ]
+}

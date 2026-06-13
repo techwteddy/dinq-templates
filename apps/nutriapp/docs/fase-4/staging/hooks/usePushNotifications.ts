@@ -1,0 +1,103 @@
+"use client";
+/**
+ * hooks/usePushNotifications.ts
+ *
+ * Hook para gestionar el ciclo completo de Web Push:
+ * - Detectar soporte
+ * - Solicitar permiso
+ * - Suscribir / desuscribir al servidor
+ * - Persistir estado
+ */
+import { useCallback, useEffect, useState } from "react";
+
+type PermissionStatus = "default" | "granted" | "denied" | "unsupported";
+
+const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
+
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
+
+export function usePushNotifications() {
+  const [status, setStatus]       = useState<PermissionStatus>("default");
+  const [isSupported, setIsSupported] = useState(false);
+  const [subscription, setSubscription] = useState<PushSubscription | null>(null);
+
+  // ── Detectar soporte ────────────────────────────────────
+  useEffect(() => {
+    const supported =
+      typeof window !== "undefined" &&
+      "serviceWorker" in navigator &&
+      "PushManager" in window &&
+      "Notification" in window;
+
+    setIsSupported(supported);
+
+    if (supported) {
+      setStatus(Notification.permission as PermissionStatus);
+      // Verificar si ya hay una suscripción activa
+      navigator.serviceWorker.ready.then((reg) => {
+        reg.pushManager.getSubscription().then((sub) => {
+          setSubscription(sub);
+          if (sub) setStatus("granted");
+        });
+      });
+    }
+  }, []);
+
+  // ── Suscribir ───────────────────────────────────────────
+  const subscribe = useCallback(async () => {
+    if (!isSupported) return;
+
+    try {
+      const permission = await Notification.requestPermission();
+      setStatus(permission as PermissionStatus);
+
+      if (permission !== "granted") return;
+
+      const registration = await navigator.serviceWorker.ready;
+      const sub = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+
+      setSubscription(sub);
+
+      // Enviar al servidor
+      await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: sub.toJSON() }),
+      });
+    } catch (err) {
+      console.error("[push] Error al suscribir:", err);
+    }
+  }, [isSupported]);
+
+  // ── Desuscribir ─────────────────────────────────────────
+  const unsubscribe = useCallback(async () => {
+    if (!subscription) return;
+
+    try {
+      const endpoint = subscription.endpoint;
+      await subscription.unsubscribe();
+      setSubscription(null);
+      setStatus("default");
+
+      await fetch("/api/push/subscribe", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint }),
+      });
+    } catch (err) {
+      console.error("[push] Error al desuscribir:", err);
+    }
+  }, [subscription]);
+
+  return { status, isSupported, subscription, subscribe, unsubscribe };
+}

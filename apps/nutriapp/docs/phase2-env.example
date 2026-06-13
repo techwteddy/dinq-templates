@@ -1,0 +1,12 @@
+# Phase 2 — Required environment variables
+# Copy to .env.local and fill in values
+
+# ── Supabase ──────────────────────────────────────────────────
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key   # server-only
+
+# ── USDA FoodData Central ─────────────────────────────────────
+# Get free key at https://api.data.gov/signup
+# Limit: ~1000 req/hour
+FDC_API_KEY=your-fdc-api-key
