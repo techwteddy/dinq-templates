@@ -1,0 +1,30 @@
+# Firebase App Hosting config for Trendly (Next.js 15 / React 19)
+# Docs: https://firebase.google.com/docs/app-hosting/configure
+
+runConfig:
+  # CPU + memory for the Cloud Run backend that serves your app.
+  # "always-on" CPU avoids cold-start lag on first visits.
+  cpu: 1
+  memoryMiB: 512
+  minInstances: 0
+  maxInstances: 3
+  concurrency: 80
+
+# Public (NEXT_PUBLIC_*) and server-only environment variables.
+# Supabase values are pulled from Firebase App Hosting secrets.
+# Create the secrets first:
+#   firebase apphosting:secrets:set SUPABASE_URL
+#   firebase apphosting:secrets:set SUPABASE_ANON_KEY
+# ...then grant the backend access when prompted.
+env:
+  - variable: NEXT_PUBLIC_SUPABASE_URL
+    secret: SUPABASE_URL
+    availability:
+      - BUILD
+      - RUNTIME
+
+  - variable: NEXT_PUBLIC_SUPABASE_ANON_KEY
+    secret: SUPABASE_ANON_KEY
+    availability:
+      - BUILD
+      - RUNTIME
