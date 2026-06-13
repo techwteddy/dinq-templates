@@ -1,0 +1,112 @@
+# .github/workflows/sync-workflow.yml
+name: Sync Workflow to GitHub Projects
+
+on:
+  push:
+    branches: [main, development]
+    paths:
+      - 'docs/workflow.md'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Parse workflow.md and create/update issues
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Read workflow.md
+            const workflowPath = path.join(process.env.GITHUB_WORKSPACE, 'docs', 'workflow.md');
+            const content = fs.readFileSync(workflowPath, 'utf-8');
+            
+            // Parse tasks
+            const taskRegex = /#### Task \d+: (.+?) [⏳🔄✅❌] (\w+)\n```yaml\n([\s\S]+?)```/g;
+            const tasks = [];
+            let match;
+            
+            while ((match = taskRegex.exec(content)) !== null) {
+              const [_, title, status, yamlContent] = match;
+              
+              // Parse YAML (simple parsing)
+              const priority = yamlContent.match(/priority: (P\d)/)?.[1] || 'P2';
+              const description = yamlContent.match(/description: \|\n([\s\S]+?)(?=\n\w+:)/)?.[1]?.trim() || '';
+              const estimatedTime = yamlContent.match(/estimated_time: (.+)/)?.[1] || '';
+              
+              tasks.push({
+                title,
+                status,
+                priority,
+                description,
+                estimatedTime,
+                labels: [priority.toLowerCase(), status.toLowerCase().replace('_', '-')]
+              });
+            }
+            
+            console.log(`Found ${tasks.length} tasks in workflow.md`);
+            
+            // Get existing issues
+            const { data: existingIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              labels: 'workflow-task'
+            });
+            
+            // Create or update issues
+            for (const task of tasks) {
+              const issueTitle = `[Workflow] ${task.title}`;
+              const existingIssue = existingIssues.find(i => i.title === issueTitle);
+              
+              const issueBody = `
+${task.description}
+
+---
+
+**Estimated Time:** ${task.estimatedTime}  
+**Priority:** ${task.priority}  
+**Status:** ${task.status}
+
+_This issue is automatically synced from \`docs/workflow.md\`_
+              `.trim();
+              
+              const labels = ['workflow-task', ...task.labels];
+              
+              if (existingIssue) {
+                // Update existing issue
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existingIssue.number,
+                  body: issueBody,
+                  labels: labels,
+                  state: task.status === 'COMPLETED' ? 'closed' : 'open'
+                });
+                console.log(`Updated issue #${existingIssue.number}: ${issueTitle}`);
+              } else if (task.status !== 'COMPLETED') {
+                // Create new issue (skip completed tasks)
+                const { data: newIssue } = await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: issueTitle,
+                  body: issueBody,
+                  labels: labels
+                });
+                console.log(`Created issue #${newIssue.number}: ${issueTitle}`);
+              }
+            }
+            
+            console.log('✅ Workflow sync completed');

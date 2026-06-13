@@ -1,0 +1,25 @@
+{
+  "recommendations": [
+    // Essential
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss",
+    "prisma.prisma",
+
+    // TypeScript & JavaScript
+    "ms-vscode.vscode-typescript-next",
+    "usernamehw.errorlens",
+
+    // Git
+    "eamodio.gitlens",
+
+    // Utilities
+    "streetsidesoftware.code-spell-checker",
+    "wayou.vscode-todo-highlight",
+    "gruntfuggly.todo-tree",
+
+    // Testing
+    "ms-playwright.playwright"
+  ],
+  "unwantedRecommendations": []
+}

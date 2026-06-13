@@ -1,0 +1,101 @@
+# Claude CLI Rules - Multi-Branch SaaS Platform
+
+## Project Context
+Multi-branch SaaS platform dengan Next.js 16+, Supabase, Prisma untuk branch management dan RBAC.
+
+## Tech Stack
+- Next.js 16+ (App Router)
+- TypeScript (strict mode)
+- Supabase (Auth + Database)
+- Prisma ORM
+- shadcn/ui + Tailwind CSS
+- React Hook Form + Zod
+- TanStack Query
+
+## Code Style & Conventions
+
+### File Naming
+- Components: PascalCase (e.g., `UserForm.tsx`)
+- Utilities/Actions: kebab-case (e.g., `create-user.ts`)
+- Types: kebab-case (e.g., `user.types.ts`)
+
+### Folder Structure
+```
+features/
+  [domain]/
+    actions/     # Server Actions
+    components/  # React Components
+    hooks/       # Custom Hooks
+    services/    # Business Logic
+    types/       # Type Definitions
+```
+
+### TypeScript Rules
+- Always use strict mode
+- Prefer type over interface for simple types
+- Use Zod for runtime validation
+- Export types from domain types/index.ts
+
+### React/Next.js Rules
+- Use Server Components by default
+- Add "use client" only when needed (forms, hooks, interactivity)
+- Prefer Server Actions over API routes
+- Use Suspense boundaries for loading states
+
+### Database Rules
+- Use Prisma for all database operations
+- Always use transactions for multi-table operations
+- Implement RLS policies in Supabase
+- Use connection pooling for production
+
+### Security Rules
+- Never expose sensitive data in client components
+- Always validate input with Zod schemas
+- Use RBAC for all protected routes
+- Implement rate limiting on Server Actions
+
+## Response Format
+- Jawab singkat dan langsung ke inti
+- Fokus pada code generation
+- Minta klarifikasi untuk detail panjang
+- Pandu step-by-step, tidak semua sekaligus
+- Sertakan status token di setiap response
+
+## Current Phase
+Setup foundation: Prisma Schema → Supabase Config → Auth → RBAC → User Management → Branch Management
+
+## Project Goals
+1. User management dengan role assignment
+2. Branch management dengan hierarchy (HQ → Branch → Sub-branch)
+3. RBAC system dengan permission checking
+4. Extensible untuk features tambahan
+
+
+
+## Workflow Commands
+
+When I say "status", show:
+1. Current task from @docs/workflow.md
+2. Files being worked on
+3. Next 3 tasks in queue
+4. Any blockers
+
+When I say "done [task]":
+1. Mark task as completed in workflow.md
+2. Add completion timestamp
+3. Show next task
+4. Summarize what was accomplished
+
+When I say "next":
+1. Show next task details
+2. List relevant files
+3. Show any dependencies
+4. Suggest starting approach
+
+When I say "checkpoint":
+1. Update workflow.md with current progress
+2. Add session notes with timestamp
+3. List files modified in this session
+4. Suggest next session focus
+
+When I say "token", show this session token and weekly token

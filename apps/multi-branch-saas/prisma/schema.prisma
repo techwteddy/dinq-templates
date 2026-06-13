@@ -1,0 +1,366 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum RoleType {
+  SUPER_ADMIN
+  REGIONAL_MANAGER
+  BRANCH_MANAGER
+  ADMIN_STAFF
+  TECHNICIAN
+  USER
+}
+
+enum PermissionScope {
+  OWN
+  BRANCH
+  REGION
+  ALL
+}
+
+enum BranchType {
+  HEADQUARTERS
+  BRANCH
+  SUB_BRANCH
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+}
+
+enum NotificationType {
+  USER_CREATED
+  USER_UPDATED
+  USER_DELETED
+  BRANCH_CREATED
+  BRANCH_UPDATED
+  BRANCH_DELETED
+  ROLE_ASSIGNED
+  ROLE_REMOVED
+  PERMISSION_CHANGED
+  SYSTEM_ANNOUNCEMENT
+  CUSTOM
+}
+
+// ============================================
+// MODELS
+// ============================================
+
+// User model - syncs with Supabase Auth
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  deletedBy String?   @map("deleted_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  profile          Profile?
+  auditLogs        AuditLog[]
+  createdByProfile Profile?  @relation("UserCreatedBy", fields: [createdBy], references: [id])
+  updatedByProfile Profile?  @relation("UserUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByProfile Profile?  @relation("UserDeletedBy", fields: [deletedBy], references: [id])
+
+  @@index([deletedAt])
+  @@map("users")
+}
+
+// Profile model - extended user data
+model Profile {
+  id          String     @id @default(uuid())
+  userId      String     @unique @map("user_id")
+  fullName    String     @map("full_name")
+  phone       String?
+  avatar      String?
+  status      UserStatus @default(ACTIVE)
+  branchId    String     @map("branch_id")
+  createdBy   String?    @map("created_by")
+  updatedBy   String?    @map("updated_by")
+  deletedBy   String?    @map("deleted_by")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  deletedAt   DateTime?  @map("deleted_at")
+
+  // Relations
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch        Branch         @relation(fields: [branchId], references: [id])
+  userRoles     UserRole[]
+  notifications Notification[]
+
+  // Audit trail relations (self-referencing)
+  createdByProfile Profile?  @relation("ProfileCreatedBy", fields: [createdBy], references: [id])
+  updatedByProfile Profile?  @relation("ProfileUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByProfile Profile?  @relation("ProfileDeletedBy", fields: [deletedBy], references: [id])
+
+  // Reverse relations for audit trail (who created/updated/deleted other records)
+  createdProfiles  Profile[] @relation("ProfileCreatedBy")
+  updatedProfiles  Profile[] @relation("ProfileUpdatedBy")
+  deletedProfiles  Profile[] @relation("ProfileDeletedBy")
+  createdUsers     User[]    @relation("UserCreatedBy")
+  updatedUsers     User[]    @relation("UserUpdatedBy")
+  deletedUsers     User[]    @relation("UserDeletedBy")
+  createdBranches  Branch[]  @relation("BranchCreatedBy")
+  updatedBranches  Branch[]  @relation("BranchUpdatedBy")
+  deletedBranches  Branch[]  @relation("BranchDeletedBy")
+  createdRoles     Role[]    @relation("RoleCreatedBy")
+  updatedRoles     Role[]    @relation("RoleUpdatedBy")
+  deletedRoles     Role[]    @relation("RoleDeletedBy")
+  createdPermissions     Permission[]     @relation("PermissionCreatedBy")
+  updatedPermissions     Permission[]     @relation("PermissionUpdatedBy")
+  deletedPermissions     Permission[]     @relation("PermissionDeletedBy")
+  createdUserRoles       UserRole[]       @relation("UserRoleCreatedBy")
+  updatedUserRoles       UserRole[]       @relation("UserRoleUpdatedBy")
+  deletedUserRoles       UserRole[]       @relation("UserRoleDeletedBy")
+  createdRolePermissions RolePermission[] @relation("RolePermissionCreatedBy")
+  updatedRolePermissions RolePermission[] @relation("RolePermissionUpdatedBy")
+  deletedRolePermissions RolePermission[] @relation("RolePermissionDeletedBy")
+  createdAuditLogs       AuditLog[]       @relation("AuditLogCreatedBy")
+  updatedAuditLogs       AuditLog[]       @relation("AuditLogUpdatedBy")
+  deletedAuditLogs       AuditLog[]       @relation("AuditLogDeletedBy")
+  createdNotifications   Notification[]   @relation("NotificationCreatedBy")
+  updatedNotifications   Notification[]   @relation("NotificationUpdatedBy")
+  deletedNotifications   Notification[]   @relation("NotificationDeletedBy")
+
+  @@index([userId])
+  @@index([branchId])
+  @@index([deletedAt])
+  @@map("profiles")
+}
+
+// Branch model - organization hierarchy
+model Branch {
+  id          String     @id @default(uuid())
+  name        String
+  code        String     @unique
+  type        BranchType
+  parentId    String?    @map("parent_id")
+  address     String?
+  phone       String?
+  email       String?
+  logo        String?    // Logo URL from Supabase Storage
+  isActive    Boolean    @default(true) @map("is_active")
+  createdBy   String?    @map("created_by")
+  updatedBy   String?    @map("updated_by")
+  deletedBy   String?    @map("deleted_by")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  deletedAt   DateTime?  @map("deleted_at")
+
+  // Relations
+  parent   Branch?   @relation("BranchHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children Branch[]  @relation("BranchHierarchy")
+  profiles Profile[]
+
+  // Audit trail relations
+  createdByProfile Profile? @relation("BranchCreatedBy", fields: [createdBy], references: [id])
+  updatedByProfile Profile? @relation("BranchUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByProfile Profile? @relation("BranchDeletedBy", fields: [deletedBy], references: [id])
+
+  @@index([parentId])
+  @@index([deletedAt])
+  @@map("branches")
+}
+
+// Role model
+model Role {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  type        RoleType  @unique
+  level       Int       @unique // 1 = highest (Super Admin), 6 = lowest (User)
+  description String?
+  isActive    Boolean   @default(true) @map("is_active")
+  createdBy   String?   @map("created_by")
+  updatedBy   String?   @map("updated_by")
+  deletedBy   String?   @map("deleted_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  // Relations
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  // Audit trail relations
+  createdByProfile Profile? @relation("RoleCreatedBy", fields: [createdBy], references: [id])
+  updatedByProfile Profile? @relation("RoleUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByProfile Profile? @relation("RoleDeletedBy", fields: [deletedBy], references: [id])
+
+  @@index([deletedAt])
+  @@map("roles")
+}
+
+// Permission model
+model Permission {
+  id          String          @id @default(uuid())
+  resource    String          // e.g., "users", "branches", "roles"
+  action      String          // e.g., "create", "read", "update", "delete"
+  scope       PermissionScope // OWN, BRANCH, REGION, ALL
+  description String?
+  createdBy   String?         @map("created_by")
+  updatedBy   String?         @map("updated_by")
+  deletedBy   String?         @map("deleted_by")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  deletedAt   DateTime?       @map("deleted_at")
+
+  // Relations
+  rolePermissions RolePermission[]
+
+  // Audit trail relations
+  createdByProfile Profile? @relation("PermissionCreatedBy", fields: [createdBy], references: [id])
+  updatedByProfile Profile? @relation("PermissionUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByProfile Profile? @relation("PermissionDeletedBy", fields: [deletedBy], references: [id])
+
+  @@unique([resource, action, scope])
+  @@index([deletedAt])
+  @@map("permissions")
+}
+
+// Junction table: User-Role mapping
+model UserRole {
+  id        String    @id @default(uuid())
+  profileId String    @map("profile_id")
+  roleId    String    @map("role_id")
+  createdBy String?   @map("created_by")
+  updatedBy String?   @map("updated_by")
+  deletedBy String?   @map("deleted_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  role    Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  // Audit trail relations
+  createdByProfile Profile? @relation("UserRoleCreatedBy", fields: [createdBy], references: [id])
+  updatedByProfile Profile? @relation("UserRoleUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByProfile Profile? @relation("UserRoleDeletedBy", fields: [deletedBy], references: [id])
+
+  @@unique([profileId, roleId])
+  @@index([profileId])
+  @@index([roleId])
+  @@index([deletedAt])
+  @@map("user_roles")
+}
+
+// Junction table: Role-Permission mapping
+model RolePermission {
+  id           String    @id @default(uuid())
+  roleId       String    @map("role_id")
+  permissionId String    @map("permission_id")
+  createdBy    String?   @map("created_by")
+  updatedBy    String?   @map("updated_by")
+  deletedBy    String?   @map("deleted_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  // Relations
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  // Audit trail relations
+  createdByProfile Profile? @relation("RolePermissionCreatedBy", fields: [createdBy], references: [id])
+  updatedByProfile Profile? @relation("RolePermissionUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByProfile Profile? @relation("RolePermissionDeletedBy", fields: [deletedBy], references: [id])
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@index([deletedAt])
+  @@map("role_permissions")
+}
+
+// Audit Log model - tracks all CRUD operations
+model AuditLog {
+  id         String      @id @default(uuid())
+  userId     String      @map("user_id")
+  action     AuditAction
+  resource   String      // e.g., "users", "branches", "roles"
+  resourceId String      @map("resource_id")
+  changes    Json?       // Before/after values for UPDATE operations
+  ipAddress  String?     @map("ip_address")
+  userAgent  String?     @map("user_agent")
+  createdBy  String?     @map("created_by")
+  updatedBy  String?     @map("updated_by")
+  deletedBy  String?     @map("deleted_by")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+  deletedAt  DateTime?   @map("deleted_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Audit trail relations
+  createdByProfile Profile? @relation("AuditLogCreatedBy", fields: [createdBy], references: [id])
+  updatedByProfile Profile? @relation("AuditLogUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByProfile Profile? @relation("AuditLogDeletedBy", fields: [deletedBy], references: [id])
+
+  @@index([userId])
+  @@index([resource])
+  @@index([action])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("audit_logs")
+}
+
+// Notification model - in-app notifications
+model Notification {
+  id          String           @id @default(uuid())
+  profileId   String           @map("profile_id")
+  type        NotificationType
+  title       String
+  message     String
+  link        String?          // Optional link to related resource
+  metadata    Json?            // Additional data (resourceId, etc.)
+  isRead      Boolean          @default(false) @map("is_read")
+  readAt      DateTime?        @map("read_at")
+  createdBy   String?          @map("created_by")
+  updatedBy   String?          @map("updated_by")
+  deletedBy   String?          @map("deleted_by")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  deletedAt   DateTime?        @map("deleted_at")
+
+  // Relations
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  // Audit trail relations
+  createdByProfile Profile? @relation("NotificationCreatedBy", fields: [createdBy], references: [id])
+  updatedByProfile Profile? @relation("NotificationUpdatedBy", fields: [updatedBy], references: [id])
+  deletedByProfile Profile? @relation("NotificationDeletedBy", fields: [deletedBy], references: [id])
+
+  @@index([profileId])
+  @@index([isRead])
+  @@index([type])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("notifications")
+}
