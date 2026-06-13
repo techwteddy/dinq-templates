@@ -1,0 +1,28 @@
+@media print {
+  body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  
+  @page {
+    margin: 1cm;
+    size: A4;
+  }
+  
+  /* Hide all navigation and UI elements */
+  nav,
+  header,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+  
+  /* Force all text to black for printing */
+  * {
+    color: black !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+

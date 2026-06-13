@@ -1,0 +1,26 @@
+# Files to exclude from Vercel deployment
+
+# Development files
+*.sql
+*.sql.gz
+scripts/
+create-storage-buckets.js
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+test-*.sql
+diagnose-*.sql
+fix-*.sql
+
+# Environment files (handled by Vercel)
+.env*.local
+.env
+
+# Git
+.git
+.gitignore
+
+
