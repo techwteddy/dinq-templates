@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "audit-website": {
+      "source": "squirrelscan/skills",
+      "sourceType": "github",
+      "skillPath": "audit-website/SKILL.md",
+      "computedHash": "82588484b29316f3106185374cc6aedf409c38a0698d49f7034c9b5ec07a1aa7"
+    },
+    "responsive-design": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/ui-design/skills/responsive-design/SKILL.md",
+      "computedHash": "155eff4b1bc8d867ae6bea9900c485ab1081de0b4873c1900adb66bf62466aed"
+    }
+  }
+}

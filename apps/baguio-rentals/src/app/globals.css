@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+:root {
+  --pine: #1a3a2a;
+  --pine-light: #2d5a42;
+  --pine-muted: #3d7a5a;
+  --amber: #d4a853;
+  --amber-light: #f0d48a;
+  --cream: #faf8f4;
+  --warm-white: #fefdfb;
+  --stone: #e8e4dd;
+  --stone-dark: #c4bfb5;
+  --bark: #4a3f35;
+  --bark-light: #6b5d4f;
+  --mist: #f2f0ec;
+}
+
+@theme inline {
+  --color-pine: var(--pine);
+  --color-pine-light: var(--pine-light);
+  --color-pine-muted: var(--pine-muted);
+  --color-amber: var(--amber);
+  --color-amber-light: var(--amber-light);
+  --color-cream: var(--cream);
+  --color-warm-white: var(--warm-white);
+  --color-stone: var(--stone);
+  --color-stone-dark: var(--stone-dark);
+  --color-bark: var(--bark);
+  --color-bark-light: var(--bark-light);
+  --color-mist: var(--mist);
+  --font-display: 'DM Serif Display', Georgia, serif;
+  --font-body: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+body {
+  background: var(--cream);
+  color: var(--bark);
+  font-family: var(--font-body);
+}
+
+/* Subtle noise texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  opacity: 0.015;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}
+
+
+/* Custom selection */
+::selection {
+  background: var(--amber-light);
+  color: var(--pine);
+}
+
+/* Animations */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.5s ease-out both;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out both;
+}
+
+.animate-slide-down {
+  animation: slideDown 0.3s ease-out both;
+}
+
+/* Staggered children */
+.stagger-children > * {
+  animation: fadeUp 0.5s ease-out both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 80ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 160ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 320ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 400ms; }
+
+/* Rotating gradient border */
+@property --r {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.rotating-gradient {
+  background: conic-gradient(from var(--r), var(--pine), var(--amber), var(--pine-light), var(--amber-light), var(--pine));
+  animation: rotateGradient 3s linear infinite;
+}
+
+@keyframes rotateGradient {
+  to { --r: 360deg; }
+}
