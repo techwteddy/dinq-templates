@@ -1,0 +1,420 @@
+'use client';
+
+import { useMemo, useState, useTransition } from 'react';
+import Image from 'next/image';
+import { useRouter } from 'next/navigation';
+import { Game, GamePlayer, Player } from '@/types';
+import { formatCurrency, formatPlayerName, calculateTotalBuyIn, calculateTotalPot, calculateTotalRebuys } from '@/lib/utils';
+import BackButton from '@/components/BackButton';
+import Modal from '@/components/Modal';
+import { addRebuy, removeLastRebuy, cashOutEarly, addWalkInPlayer } from './actions';
+import { CurrencyDollar, Users, Fire, Target, Plus, Minus, SignOut, Trophy, Check, X, UserPlus, MagnifyingGlass } from '@phosphor-icons/react';
+
+interface LiveGameClientProps {
+  game: Game;
+  initialGamePlayers: GamePlayer[];
+  players: Player[];
+  isAdmin: boolean;
+}
+
+export default function LiveGameClient({
+  game,
+  initialGamePlayers,
+  players,
+  isAdmin,
+}: LiveGameClientProps) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [coinAnimation, setCoinAnimation] = useState<string | null>(null);
+  const [cashOutMode, setCashOutMode] = useState<string | null>(null);
+  const [cashOutInputValue, setCashOutInputValue] = useState('');
+  const [cashedOutPlayerIds, setCashedOutPlayerIds] = useState<Set<string>>(() => {
+    // Initialize from server data — any player with cashOut > 0 was already cashed out
+    return new Set(initialGamePlayers.filter(gp => gp.cashOut > 0).map(gp => gp.id));
+  });
+  const [walkInOpen, setWalkInOpen] = useState(false);
+  const [walkInSearch, setWalkInSearch] = useState('');
+
+  const gamePlayers = initialGamePlayers;
+
+  const activePlayerIds = useMemo(
+    () => new Set(gamePlayers.map(gp => gp.playerId)),
+    [gamePlayers]
+  );
+
+  const walkInCandidates = useMemo(() => {
+    const query = walkInSearch.trim().toLowerCase();
+    return players
+      .filter(p => !activePlayerIds.has(p.id))
+      .filter(p => {
+        if (!query) return true;
+        const haystack = `${p.first_name} ${p.last_name} ${p.nickname ?? ''} ${p.email}`.toLowerCase();
+        return haystack.includes(query);
+      })
+      .sort((a, b) => a.first_name.localeCompare(b.first_name));
+  }, [players, activePlayerIds, walkInSearch]);
+
+  const handleAddRebuy = async (gamePlayerId: string) => {
+    setCoinAnimation(gamePlayerId);
+    setTimeout(() => setCoinAnimation(null), 600);
+
+    startTransition(async () => {
+      const result = await addRebuy(game.id, gamePlayerId, game.buyIn);
+      if ('error' in result) {
+        alert(result.error);
+      }
+    });
+  };
+
+  const handleRemoveRebuy = async (gamePlayerId: string) => {
+    if (confirm('Remove the last rebuy for this player?')) {
+      startTransition(async () => {
+        const result = await removeLastRebuy(game.id, gamePlayerId);
+        if ('error' in result) {
+          alert(result.error);
+        }
+      });
+    }
+  };
+
+  const handleCashOut = async (gamePlayerId: string) => {
+    const amount = parseFloat(cashOutInputValue);
+    if (isNaN(amount) || amount < 0) {
+      alert('Please enter a valid amount');
+      return;
+    }
+    startTransition(async () => {
+      const result = await cashOutEarly(game.id, gamePlayerId, amount);
+      if ('error' in result) {
+        alert(result.error);
+      } else {
+        setCashedOutPlayerIds(prev => new Set(prev).add(gamePlayerId));
+        setCashOutMode(null);
+        setCashOutInputValue('');
+      }
+    });
+  };
+
+  const handleAddWalkIn = (playerId: string) => {
+    startTransition(async () => {
+      const result = await addWalkInPlayer(game.id, playerId);
+      if ('error' in result) {
+        alert(result.error);
+      } else {
+        setWalkInOpen(false);
+        setWalkInSearch('');
+      }
+    });
+  };
+
+  const handleEndGame = () => {
+    if (confirm('End the game and proceed to cash-out recording?')) {
+      router.push(`/game/${game.id}/cashout`);
+    }
+  };
+
+  // Calculate total pot from game_players
+  const totalPot = calculateTotalPot(gamePlayers);
+  const earlyCashOuts = gamePlayers.reduce((sum, gp) => sum + gp.cashOut, 0);
+  const activePot = totalPot - earlyCashOuts;
+
+  // Find player with most rebuys (only if they have rebuys, not just initial buy-in)
+  const playersWithRebuys = gamePlayers.filter(gp => gp.buyIns.length > 1);
+  const mostRebuys = playersWithRebuys.length > 0
+    ? playersWithRebuys.reduce((max, gp) => gp.buyIns.length > max.buyIns.length ? gp : max, playersWithRebuys[0])
+    : null;
+
+  return (
+    <>
+      {/* Back Button */}
+      <BackButton href={`/game/${game.id}`} label="Back to Game" />
+
+      {/* Live Header */}
+      <div className="text-center mb-8">
+        <div className="flex items-center justify-center gap-3 mb-3">
+          <span className="w-4 h-4 bg-red-500 rounded-full animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.8)]"></span>
+          <h1 className="font-display text-4xl md:text-5xl font-bold text-white drop-shadow-lg">Live Game</h1>
+        </div>
+        <p className="text-gray-400 text-lg">Track buy-ins and rebuys in real-time</p>
+      </div>
+
+      {/* Total Pot Display */}
+      <div className="glass-panel rounded-2xl p-10 mb-8 text-center border-2 border-poker-gold/30 bg-gradient-to-b from-poker-gold/10 to-transparent shadow-[0_0_50px_rgba(212,175,55,0.2)]">
+        <p className="text-gray-400 text-sm uppercase tracking-widest mb-4 font-bold">Total Pot</p>
+        <div className="flex items-center justify-center gap-4">
+          <CurrencyDollar weight="fill" className="text-poker-gold text-6xl animate-gold-pulse" />
+          <p className="font-display text-7xl md:text-8xl font-bold text-poker-gold drop-shadow-[0_0_20px_rgba(212,175,55,0.5)]">
+            {formatCurrency(activePot)}
+          </p>
+        </div>
+        {earlyCashOuts > 0 && (
+          <p className="text-gray-400 text-sm mt-3">
+            {formatCurrency(earlyCashOuts)} cashed out
+          </p>
+        )}
+      </div>
+
+      {/* Game Stats Bar */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
+        <div className="glass-panel rounded-xl p-6 border border-white/10">
+          <div className="flex items-center gap-3 mb-2">
+            <Users weight="bold" className="text-blue-400" size={24} />
+            <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">Players</p>
+          </div>
+          <p className="text-3xl font-display font-bold text-white">{gamePlayers.length}</p>
+        </div>
+        <div className="glass-panel rounded-xl p-6 border border-white/10">
+          <div className="flex items-center gap-3 mb-2">
+            <Fire weight="fill" className="text-orange-400" size={24} />
+            <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">Total Rebuys</p>
+          </div>
+          <p className="text-3xl font-display font-bold text-white">
+            {calculateTotalRebuys(gamePlayers)}
+          </p>
+        </div>
+        <div className="glass-panel rounded-xl p-6 border border-white/10 col-span-2 md:col-span-1">
+          <div className="flex items-center gap-3 mb-2">
+            <Trophy weight="fill" className="text-amber-400" size={24} />
+            <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">Most Rebuys</p>
+          </div>
+          {mostRebuys ? (
+            <p className="text-xl font-display font-bold text-amber-400 truncate">
+              {players.find(p => p.id === mostRebuys.playerId)?.first_name}
+            </p>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Target weight="bold" className="text-green-400" size={20} />
+              <p className="text-sm text-gray-400 italic">Playing tight!</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Walk-in Add (admin only) */}
+      {isAdmin && (
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={() => { setWalkInOpen(true); setWalkInSearch(''); }}
+            disabled={isPending}
+            className="flex items-center gap-2 px-5 py-3 bg-gradient-to-b from-poker-gold to-yellow-600 hover:from-poker-goldlight hover:to-poker-gold text-black font-bold rounded-xl transition-all border border-yellow-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <UserPlus weight="bold" size={20} />
+            Add Walk-in
+          </button>
+        </div>
+      )}
+
+      {/* Player Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+        {gamePlayers.map(gamePlayer => {
+          const player = players.find(p => p.id === gamePlayer.playerId);
+          if (!player) return null;
+
+          const totalBuyIn = calculateTotalBuyIn(gamePlayer.buyIns);
+          const rebuyCount = gamePlayer.buyIns.length - 1;
+
+          const isCashedOut = cashedOutPlayerIds.has(gamePlayer.id) || gamePlayer.cashOut > 0;
+
+          return (
+            <div key={gamePlayer.id} className={`glass-panel rounded-2xl p-6 border relative overflow-hidden transition-all group ${isCashedOut ? 'border-green-500/30 opacity-60' : 'border-white/10 hover:border-poker-gold/30'}`}>
+              {/* Coin Animation */}
+              {coinAnimation === gamePlayer.id && (
+                <div className="absolute top-4 right-4 animate-coin-drop z-10">
+                  <CurrencyDollar weight="fill" className="w-12 h-12 text-poker-gold drop-shadow-[0_0_20px_rgba(212,175,55,0.8)]" />
+                </div>
+              )}
+
+              <div className="flex items-start gap-4 mb-6">
+                <Image
+                  src={`/avatars/${player.avatar}`}
+                  alt={formatPlayerName(player)}
+                  width={64}
+                  height={64}
+                  unoptimized
+                  className="w-16 h-16 rounded-full border-2 border-poker-gold/50 shadow-lg flex-shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-display text-xl font-bold text-white mb-1 truncate">
+                    {formatPlayerName(player)}
+                  </h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-gray-400 text-sm font-medium">
+                      {gamePlayer.buyIns.length} buy-in{gamePlayer.buyIns.length !== 1 ? 's' : ''}
+                    </span>
+                    {rebuyCount > 0 && (
+                      <span className="px-2 py-0.5 bg-orange-950/50 border border-orange-500/50 text-orange-400 text-xs font-bold rounded">
+                        {rebuyCount} rebuy{rebuyCount !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {isCashedOut && (
+                      <span className="px-2 py-0.5 bg-green-950/50 border border-green-500/50 text-green-400 text-xs font-bold rounded flex items-center gap-1">
+                        <Check weight="bold" size={12} />
+                        Cashed Out: {formatCurrency(gamePlayer.cashOut)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="font-display text-3xl font-bold text-poker-gold">
+                    {formatCurrency(totalBuyIn)}
+                  </p>
+                </div>
+              </div>
+
+              {isAdmin && !isCashedOut && (
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleAddRebuy(gamePlayer.id)}
+                    disabled={isPending}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-b from-poker-gold to-yellow-600 hover:from-poker-goldlight hover:to-poker-gold text-black font-bold rounded-lg transition-all border border-yellow-200 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus weight="bold" size={20} />
+                    Add Rebuy +{formatCurrency(game.buyIn)}
+                  </button>
+                  {rebuyCount > 0 && (
+                    <button
+                      onClick={() => handleRemoveRebuy(gamePlayer.id)}
+                      disabled={isPending}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-600/20 hover:bg-red-600/30 border border-red-500/50 text-red-400 font-bold rounded-lg transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Minus weight="bold" size={16} />
+                      Remove Last Rebuy
+                    </button>
+                  )}
+
+                  {/* Cash Out Button / Input */}
+                  {cashOutMode === gamePlayer.id ? (
+                    <div className="flex items-center gap-2 mt-2">
+                      <div className="relative flex-1">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={cashOutInputValue}
+                          onChange={(e) => setCashOutInputValue(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full pl-7 pr-3 py-2.5 bg-black/40 border-2 border-white/10 focus:border-poker-gold/50 rounded-lg text-white focus:ring-2 focus:ring-poker-gold/20 focus:outline-none transition-all text-sm"
+                          autoFocus
+                        />
+                      </div>
+                      <button
+                        onClick={() => handleCashOut(gamePlayer.id)}
+                        disabled={isPending}
+                        className="px-3 py-2.5 bg-gradient-to-b from-poker-gold to-yellow-600 hover:from-poker-goldlight hover:to-poker-gold text-black font-bold rounded-lg transition-all border border-yellow-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Check weight="bold" size={18} />
+                      </button>
+                      <button
+                        onClick={() => { setCashOutMode(null); setCashOutInputValue(''); }}
+                        className="px-3 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-400 rounded-lg transition-all"
+                      >
+                        <X weight="bold" size={18} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setCashOutMode(gamePlayer.id); setCashOutInputValue(''); }}
+                      disabled={isPending}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-400 hover:text-white font-bold rounded-lg transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <SignOut weight="bold" size={16} />
+                      Cash Out Early
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Walk-in Modal (admin only) */}
+      {isAdmin && (
+        <Modal
+          isOpen={walkInOpen}
+          onClose={() => { setWalkInOpen(false); setWalkInSearch(''); }}
+          title="Add Walk-in Player"
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <p className="text-gray-400 text-sm">
+              Adds an existing player to this game with a {formatCurrency(game.buyIn)} buy-in.
+              To add a brand-new player, create them in Admin first.
+            </p>
+
+            <div className="relative">
+              <MagnifyingGlass weight="bold" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <input
+                type="text"
+                value={walkInSearch}
+                onChange={(e) => setWalkInSearch(e.target.value)}
+                placeholder="Search by name, nickname, or email"
+                className="w-full pl-10 pr-4 py-3 bg-black/40 border-2 border-white/10 focus:border-poker-gold/50 rounded-xl text-white focus:ring-2 focus:ring-poker-gold/20 focus:outline-none transition-all"
+                autoFocus
+              />
+            </div>
+
+            <div className="max-h-80 overflow-y-auto -mx-2 px-2 space-y-2">
+              {walkInCandidates.length === 0 ? (
+                <p className="text-gray-400 text-sm text-center py-8">
+                  {players.length === activePlayerIds.size
+                    ? 'All players are already in this game.'
+                    : 'No players match your search.'}
+                </p>
+              ) : (
+                walkInCandidates.map(player => (
+                  <button
+                    key={player.id}
+                    onClick={() => handleAddWalkIn(player.id)}
+                    disabled={isPending}
+                    className="w-full flex items-center gap-3 p-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-poker-gold/40 rounded-xl transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Image
+                      src={`/avatars/${player.avatar}`}
+                      alt={formatPlayerName(player)}
+                      width={40}
+                      height={40}
+                      unoptimized
+                      className="w-10 h-10 rounded-full border border-poker-gold/40 flex-shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-semibold truncate">{formatPlayerName(player)}</p>
+                      <p className="text-gray-400 text-xs truncate">{player.email}</p>
+                    </div>
+                    <Plus weight="bold" className="text-poker-gold flex-shrink-0" size={20} />
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* End Game Button - Admin Only */}
+      {isAdmin && (
+        <div className="glass-panel rounded-2xl p-8 border-2 border-poker-gold/30 bg-gradient-to-b from-poker-gold/10 to-transparent">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-poker-gold/20 border-2 border-poker-gold/50 flex items-center justify-center">
+                <SignOut weight="bold" className="text-poker-gold" size={24} />
+              </div>
+              <div>
+                <h3 className="font-display text-2xl font-bold text-white mb-1">Ready to cash out?</h3>
+                <p className="text-gray-400 text-sm">
+                  End the game and record everyone&apos;s final cash-out amounts
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleEndGame}
+              className="px-8 py-4 bg-gradient-to-b from-poker-gold to-yellow-600 hover:from-poker-goldlight hover:to-poker-gold text-black font-display font-bold rounded-xl transition-all border border-yellow-200 shadow-[0_0_20px_rgba(212,175,55,0.3)] hover:shadow-[0_0_30px_rgba(212,175,55,0.5)] whitespace-nowrap"
+            >
+              End Game
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
