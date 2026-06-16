@@ -1,0 +1,140 @@
+---
+title: "Dashboard"
+description: "Embedded web dashboard for real-time call monitoring, latency, and cost analytics."
+icon: "gauge"
+---
+
+# Dashboard
+
+Patter ships a built-in web dashboard for monitoring calls in real time. It runs alongside your server and gives you a visual interface for live call tracking, latency analysis, cost breakdowns, and historical data export.
+
+<Note>
+  The dashboard was rewritten as a Vite + React single-page app in the latest release. The user-facing experience is unchanged — `phone.serve()` still serves the UI from `http://127.0.0.1:8000/`, with no extra build step, no CDN dependency, and identical routes. Only the visuals and internal organisation have changed.
+</Note>
+
+## Enabling the dashboard
+
+The dashboard is enabled by default whenever you start a server in local mode:
+
+```typescript
+await phone.serve({
+  agent,
+  port: 8000,
+  dashboard: true,                // Enable dashboard (default: true)
+  dashboardToken: "secret",       // Optional: protect with a token
+});
+```
+
+Once running, open your browser at `http://127.0.0.1:8000/`.
+
+<Tip>
+  When `dashboard: true` and no `dashboardToken` is set, the SDK logs a warning at startup. For anything beyond local development, always set a token — the dashboard surfaces transcripts and customer phone numbers.
+</Tip>
+
+## Authentication
+
+Protect the dashboard with a token:
+
+```typescript
+await phone.serve({
+  agent,
+  port: 8000,
+  dashboardToken: "my-secret-token",
+});
+```
+
+Access via:
+
+- **Browser**: `http://127.0.0.1:8000/?token=my-secret-token`
+- **API**: `Authorization: Bearer my-secret-token` header
+
+When no token is set, the dashboard is accessible without authentication (intended for `127.0.0.1` development only).
+
+## What you see
+
+The dashboard is a single-page app that consumes the SDK's existing `/api/dashboard/*` endpoints and pushes live updates over Server-Sent Events.
+
+### Top metrics row
+
+Aggregate counters across the in-memory ring buffer (last 500 calls):
+
+- **Total Calls** — completed + active
+- **Total Cost** — summed across STT, LLM, TTS, and telephony
+- **Avg Duration** — mean call length
+- **Avg Latency** — end-to-end response latency
+
+Numerics use JetBrains Mono so columns line up at a glance.
+
+### Call table
+
+All completed calls with cost, duration, turn count, latency, provider, and voice mode. Click any row to open the detail panel.
+
+### Live-call right rail
+
+When a call is active, the right rail shows it in real time:
+
+- Caller / callee numbers (last-4 redacted in logs, full in UI)
+- Live duration counter
+- Streaming transcript with speaker labels
+- **Per-call latency waterfall** — STT, LLM first-token, TTS first-byte, total turn latency
+- **Cost breakdown** — running totals per component as the call progresses
+
+When the call ends, it moves into the call table and the right rail clears.
+
+### Call detail
+
+Click any historical call to see the full transcript, the same latency waterfall (averaged + P95), and the same cost breakdown for that single call.
+
+### Real-time updates
+
+All views subscribe to `GET /api/dashboard/events` (SSE). New calls, transcript turns, and metric updates appear without polling or refresh.
+
+## Data export
+
+Export the call ring buffer in CSV or JSON:
+
+| Format | Endpoint | Shape |
+|---|---|---|
+| CSV | `GET /api/dashboard/export/calls?format=csv` | One row per call, flat columns |
+| JSON | `GET /api/dashboard/export/calls?format=json` | Full nested data including per-turn metrics |
+
+## API endpoints
+
+The dashboard UI is a thin client over a stable REST + SSE API. Use these directly to integrate with your own tooling.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Dashboard web UI (single self-contained HTML file). |
+| `GET /api/dashboard/calls` | Paginated call history. |
+| `GET /api/dashboard/calls/:callId` | Single call detail with full transcript. |
+| `GET /api/dashboard/active` | Currently active calls. |
+| `GET /api/dashboard/aggregates` | Aggregate statistics. |
+| `GET /api/dashboard/events` | SSE event stream for live updates. |
+| `GET /api/dashboard/export/calls` | Export calls as CSV (`?format=csv`) or JSON. |
+
+### Example: fetch call history
+
+```typescript
+const response = await fetch(
+  "http://127.0.0.1:8000/api/dashboard/calls?limit=10",
+  { headers: { Authorization: "Bearer my-secret-token" } },
+);
+const calls = await response.json();
+```
+
+### Example: subscribe to live events
+
+```typescript
+const eventSource = new EventSource(
+  "http://127.0.0.1:8000/api/dashboard/events",
+);
+
+eventSource.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log("Dashboard event:", data);
+};
+```
+
+<Note>
+  The dashboard stores metrics in an in-memory 500-call ring buffer. Data persists across restarts via the on-disk hydration layer (see `dashboard/persistence.ts`), but for long-term analytics use the `onCallEnd` callback to write metrics to your own database.
+</Note>

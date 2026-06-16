@@ -1,0 +1,206 @@
+---
+title: "OpenAI Realtime 2 (GA)"
+description: "GA Realtime API engine — separate adapter that speaks the new session.update wire shape required by gpt-realtime-2."
+icon: "bolt"
+---
+
+# OpenAI Realtime 2
+
+`OpenAIRealtime2` is the engine marker for OpenAI's **GA Realtime API** (the production endpoint that replaces the beta `OpenAI-Beta: realtime=v1` channel). It targets `gpt-realtime-2` by default and routes through `OpenAIRealtime2Adapter` — a dedicated adapter that speaks the GA `session.update` wire shape and performs bidirectional audio transcoding (mulaw 8 kHz ↔ PCM 24 kHz) required by the GA audio engine.
+
+For the legacy beta endpoint and the lower-cost `gpt-realtime-mini` model, keep using [`OpenAIRealtime`](/python-sdk/providers/openai-realtime). The two engines coexist — pick `OpenAIRealtime2` only when you specifically want the GA endpoint or the `gpt-realtime-2` model.
+
+<Note>
+The GA endpoint rejects the legacy `OpenAI-Beta: realtime=v1` header and expects `output_modalities`, nested `audio.{input,output}` blocks with MIME-type strings, and `session.type = "realtime"`. These wire-shape differences are why GA needs its own adapter — the beta `OpenAIRealtimeAdapter` cannot reach `gpt-realtime-2` reliably.
+</Note>
+
+## When to use
+
+| Use `OpenAIRealtime2` when… | Stick with `OpenAIRealtime` when… |
+|----------------------------|-----------------------------------|
+| You want `gpt-realtime-2` — strongest instruction following + 128K context + configurable `reasoning_effort`. | You're on `gpt-realtime-mini` for cost / latency reasons. |
+| You're hitting the GA endpoint and the beta channel is being deprecated for your account. | You don't need the GA wire shape and want to keep the existing adapter path. |
+| You want the bidirectional PCM 24 kHz transcoding handled by the SDK rather than the model silently dropping mulaw frames. | Your audio is already PCM 24 kHz end-to-end and beta works for you. |
+
+## Quickstart
+
+```python
+import asyncio
+
+from getpatter import Patter, Twilio, OpenAIRealtime2
+
+phone = Patter(carrier=Twilio(), phone_number="+15555550100")  # TWILIO_* from env
+
+agent = phone.agent(
+    engine=OpenAIRealtime2(reasoning_effort="low"),
+    system_prompt="You are a friendly receptionist.",
+    first_message="Hello! How can I help today?",
+)
+
+async def main() -> None:
+    await phone.serve(agent)
+
+asyncio.run(main())
+```
+
+`reasoning_effort="low"` is OpenAI's recommended production tier for live voice — it gives the best instruction following without measurable per-turn latency.
+
+## Constructor
+
+```python
+from getpatter import OpenAIRealtime2
+
+OpenAIRealtime2(
+    api_key: str = "",                               # reads OPENAI_API_KEY
+    voice: str = "alloy",
+    model: str = "gpt-realtime-2",
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None,
+    input_audio_transcription_model: str | None = None,  # default: whisper-1
+    noise_reduction: Literal["near_field", "far_field"] | None = None,
+    turn_detection: RealtimeTurnDetection | None = None,
+)
+```
+
+All fields are optional with safe defaults. `api_key` falls back to the `OPENAI_API_KEY` environment variable.
+
+### Reasoning effort
+
+| Value | When to use |
+|-------|-------------|
+| `"minimal"` | Snappy turn-taking. Skips most reasoning. |
+| `"low"` | **Recommended for production voice.** Good instruction following without measurable per-turn latency. |
+| `"medium"` | Multi-step tool flows where the model should plan. Adds latency. |
+| `"high"` | Complex reasoning. Not recommended for live phone calls. |
+
+When set, Patter injects `session.reasoning = { effort: ... }` into the GA `session.update` payload. When omitted, the field is not sent and OpenAI's server default applies.
+
+### Streaming transcription
+
+Set `input_audio_transcription_model` to override `audio.input.transcription.model`. The same identifiers as the beta endpoint apply — see the [streaming-transcription table on the OpenAI Realtime page](/python-sdk/providers/openai-realtime#streaming-transcription) for the full list (`whisper-1`, `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`, `gpt-realtime-whisper`).
+
+## Server-managed turn-taking
+
+By default the GA adapter sets `create_response: true` and `interrupt_response: true` in `session.update.turn_detection`, so the **OpenAI server owns turn-taking end to end**: it runs VAD, decides end-of-turn, creates the response as soon as the caller stops speaking, and cancels its own response on barge-in. The input transcript (Whisper) is pure observability — it never gates or cancels the reply, so the transcription-model choice has no effect on reply latency.
+
+On Patter's WebSocket transport the client still clears the carrier playout buffer and sends `conversation.item.truncate` for the offset the caller actually heard (OpenAI auto-truncates only on WebRTC/SIP); it does not send a redundant `response.cancel`, run a client-side gate, or re-anchor turn metrics.
+
+To restore the legacy client-managed path, set `gate_response_on_transcript=True` on the engine marker (or `realtime_gate_response_on_transcript=True` on `Patter.agent(...)`): that emits `create_response: false` + `interrupt_response: false` and re-gates the reply on the transcript arriving — the escape hatch for no-AEC PSTN self-interruption.
+
+## Speakerphone noise & false barge-in
+
+On a speakerphone or in a noisy room, mouse clicks, the phone being picked up or set down, and background chatter can be mistaken for the caller speaking — the agent gets cut off mid-sentence. Because turn-taking is server-managed, you tune false barge-ins at the OpenAI VAD layer (no carrier-side change), not with a client gate:
+
+### Input noise reduction
+
+```python
+agent = phone.agent(
+    engine=OpenAIRealtime2(noise_reduction="far_field"),
+    system_prompt="...",
+)
+```
+
+`noise_reduction` enables OpenAI's native input noise reduction:
+
+| Value | When to use |
+|-------|-------------|
+| `"far_field"` | **Recommended for phone / speakerphone / conference audio.** Filters room noise and distance. |
+| `"near_field"` | A handset held close to the mouth. |
+| `None` (default) | No reduction — today's behaviour, field omitted entirely. |
+
+The GA adapter nests it under `session.audio.input.input_audio_noise_reduction`.
+
+### Turn-detection tuning
+
+```python
+from getpatter import RealtimeTurnDetection
+
+# Raise the server_vad threshold so background noise doesn't trip it…
+agent = phone.agent(
+    engine=OpenAIRealtime2(
+        noise_reduction="far_field",
+        turn_detection=RealtimeTurnDetection(type="server_vad", threshold=0.6),
+    ),
+    system_prompt="...",
+)
+
+# …or switch to semantic_vad with eagerness="low" so the model waits for the
+# caller to actually finish before treating audio as speech.
+agent = phone.agent(
+    engine=OpenAIRealtime2(
+        turn_detection=RealtimeTurnDetection(type="semantic_vad", eagerness="low"),
+    ),
+    system_prompt="...",
+)
+```
+
+`RealtimeTurnDetection` is a frozen config. Each unset field falls back to the adapter default (`server_vad`, `threshold` 0.5, `prefix_padding_ms` 300, `silence_duration_ms` 300):
+
+| Field | Applies to | Notes |
+|-------|-----------|-------|
+| `type` | both | `"server_vad"` (default) or `"semantic_vad"`. |
+| `threshold` | server_vad | 0..1; higher rejects more background noise. |
+| `prefix_padding_ms` | server_vad | Padding before detected speech. |
+| `silence_duration_ms` | server_vad | Trailing silence before end-of-turn. |
+| `eagerness` | semantic_vad | `"low"` lets the caller finish (least likely to interrupt), through `"medium"` / `"high"` / `"auto"`. |
+
+`semantic_vad` emits `{type, eagerness}` only — OpenAI rejects threshold / padding / silence on the semantic detector. Both knobs are also exposed directly on `Patter.agent(openai_realtime_noise_reduction=..., realtime_turn_detection=...)`; an explicit `agent()` kwarg wins over the engine marker value.
+
+## Tool-call preambles
+
+`gpt-realtime-2` emits preambles by default — a short spoken line describing the action it's about to take ("I'll check that order now.") immediately before a slow tool call, in its own voice. Set `tool_call_preambles=True` on the agent to prepend a native `# Preambles` guidance block that reinforces *when* to use one:
+
+```python
+agent = phone.agent(
+    system_prompt="You are a customer-support agent.",
+    engine=OpenAIRealtime2(),
+    tools=[check_order_tool],
+    tool_call_preambles=True,
+)
+```
+
+This is the recommended UX for 30-60 s tools — the model bridges the silence itself, with no client-side timer. See [tool-call preambles](/python-sdk/tools#tool-call-preambles) for the value forms (`True` / `str` override) and how it interacts with per-tool `reassurance`.
+
+## Audio path
+
+The GA audio engine speaks PCM 24 kHz and silently drops mulaw frames. Patter handles the conversion transparently inside `OpenAIRealtime2Adapter`:
+
+- **Inbound** (Twilio/Telnyx → model): mulaw 8 kHz → PCM 24 kHz
+- **Outbound** (model → Twilio/Telnyx): PCM 24 kHz → mulaw 8 kHz
+
+No caller-side change is required — both Twilio Media Streams (mulaw 8 kHz) and Telnyx Call Control (PCM 16 kHz / mulaw 8 kHz) work out of the box.
+
+## Direct adapter use
+
+`OpenAIRealtime2Adapter` is exported and may be constructed directly when you need to share connection state across calls or override low-level fields:
+
+```python
+from getpatter import OpenAIRealtime2Adapter
+
+adapter = OpenAIRealtime2Adapter(
+    api_key="",                          # reads OPENAI_API_KEY
+    model="gpt-realtime-2",
+    voice="nova",
+    instructions="You are a helpful assistant.",
+    reasoning_effort="low",
+    input_audio_transcription_model="gpt-realtime-whisper",
+)
+
+agent = phone.agent(engine=adapter, system_prompt="...", first_message="...")
+```
+
+The adapter subclasses `OpenAIRealtimeAdapter` and overrides `connect()`, `send_audio()`, `receive_events()`, and `send_first_message()` for the GA wire shape.
+
+## Backward compatibility
+
+- Existing `OpenAIRealtime(...)` callers are **unaffected**. The legacy engine continues to target the beta endpoint with `gpt-realtime-mini` as the default.
+- `OpenAIRealtime2` ships as an additive engine — no migration required. Pick it when you want the GA endpoint; otherwise stay where you are.
+- Pricing for `gpt-realtime-2` is auto-resolved per model from `DEFAULT_PRICING["openai_realtime"].models["gpt-realtime-2"]` — see [Metrics](/python-sdk/metrics).
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="OpenAI Realtime (beta)" icon="bolt" href="/python-sdk/providers/openai-realtime">The legacy engine for `gpt-realtime-mini` and earlier preview models.</Card>
+  <Card title="Engines" icon="bolt" href="/python-sdk/engines">All engine classes side by side.</Card>
+  <Card title="Agents" icon="user-gear" href="/python-sdk/agents">Configure system prompts, tools, and first messages.</Card>
+  <Card title="Tools" icon="screwdriver-wrench" href="/python-sdk/tools">Function calling inside a Realtime session.</Card>
+</CardGroup>

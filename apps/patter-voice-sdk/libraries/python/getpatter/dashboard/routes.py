@@ -1,0 +1,192 @@
+"""Dashboard API and UI routes for the EmbeddedServer."""
+
+import asyncio
+import json
+import re
+from datetime import datetime, timezone
+
+from getpatter.dashboard.store import MetricsStore
+
+
+def mount_dashboard(app, store: MetricsStore, token: str = "") -> None:
+    """Add dashboard routes to an existing FastAPI app.
+
+    Mounts:
+      - ``GET /`` — the web UI
+      - ``GET /api/dashboard/calls`` — call list JSON
+      - ``GET /api/dashboard/calls/{call_id}`` — single call JSON
+      - ``GET /api/dashboard/active`` — active calls JSON
+      - ``GET /api/dashboard/aggregates`` — aggregate stats JSON
+      - ``GET /api/dashboard/events`` — SSE event stream
+      - ``GET /api/dashboard/export/calls`` — CSV/JSON export
+
+    Args:
+        app: The FastAPI application instance.
+        store: The MetricsStore to read from.
+        token: Optional bearer token for authentication. When set, all
+            dashboard routes require valid token via header or query param.
+    """
+    from fastapi import Depends, Request
+    from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+
+    from getpatter.dashboard.auth import make_auth_dependency
+
+    auth = make_auth_dependency(token=token)
+
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard_ui(_=Depends(auth)):
+        from getpatter.dashboard.ui import DASHBOARD_HTML
+
+        return HTMLResponse(content=DASHBOARD_HTML)
+
+    @app.get("/api/dashboard/calls", dependencies=[Depends(auth)])
+    async def dashboard_calls(request: Request):
+        try:
+            limit = max(0, min(int(request.query_params.get("limit", "50")), 1000))
+        except (ValueError, TypeError):
+            limit = 50
+        try:
+            offset = max(int(request.query_params.get("offset", "0")), 0)
+        except (ValueError, TypeError):
+            offset = 0
+        return JSONResponse(content=store.get_calls(limit=limit, offset=offset))
+
+    @app.get("/api/dashboard/calls/{call_id}")
+    async def dashboard_call_detail(call_id: str, _=Depends(auth)):
+        # Fall back to the active record so the live-transcript polling
+        # path (``useTranscript`` in the dashboard SPA) sees turns as
+        # they accumulate during the call. Without this fallback the
+        # route 404s while the call is in flight and the live transcript
+        # pane stays empty.
+        call = store.get_call(call_id)
+        if call is None:
+            call = store.get_active(call_id)
+        if call is None:
+            return JSONResponse(content={"error": "Not found"}, status_code=404)
+        return JSONResponse(content=call)
+
+    @app.get("/api/dashboard/active")
+    async def dashboard_active(_=Depends(auth)):
+        return JSONResponse(content=store.get_active_calls())
+
+    @app.get("/api/dashboard/aggregates")
+    async def dashboard_aggregates(_=Depends(auth)):
+        return JSONResponse(content=store.get_aggregates())
+
+    # --- Soft delete ---
+    #
+    # ``DELETE /api/dashboard/calls/{call_id}`` removes a single call from
+    # the dashboard view and aggregate metrics. ``POST
+    # /api/dashboard/calls/delete`` accepts a batch ``{"call_ids": [...]}``.
+    # Both are idempotent and never touch the on-disk artefacts written by
+    # ``CallLogger`` — those serve as the durable backup. Active calls are
+    # silently skipped so a mid-call delete cannot orphan the live pane.
+
+    @app.delete("/api/dashboard/calls/{call_id}", dependencies=[Depends(auth)])
+    async def dashboard_delete_call(call_id: str):
+        accepted = store.delete_calls([call_id])
+        return JSONResponse(content={"deleted": accepted, "count": len(accepted)})
+
+    @app.post("/api/dashboard/calls/delete", dependencies=[Depends(auth)])
+    async def dashboard_delete_calls(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        raw = body.get("call_ids") if isinstance(body, dict) else None
+        if not isinstance(raw, list):
+            return JSONResponse(
+                content={"error": "Expected JSON body {'call_ids': [...]}"},
+                status_code=400,
+            )
+        accepted = store.delete_calls([cid for cid in raw if isinstance(cid, str)])
+        return JSONResponse(content={"deleted": accepted, "count": len(accepted)})
+
+    # --- SSE endpoint ---
+
+    @app.get("/api/dashboard/events")
+    async def dashboard_sse(_=Depends(auth)):
+        queue = store.subscribe()
+
+        async def event_generator():
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                        event_type = event.get("type", "message")
+                        if event_type == "__close__":
+                            # The store force-dropped this subscriber (queue
+                            # overflow). End the response so the browser's
+                            # EventSource reconnects with a fresh queue.
+                            break
+                        event_type = re.sub(r"[\r\n]", "", event_type)
+                        data = json.dumps(event.get("data", {}), default=str)
+                        yield f"event: {event_type}\ndata: {data}\n\n"
+                    except asyncio.TimeoutError:
+                        # Send keepalive
+                        yield ": keepalive\n\n"
+            except asyncio.CancelledError:
+                pass
+            finally:
+                store.unsubscribe(queue)
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    # --- Export endpoint ---
+
+    @app.get("/api/dashboard/export/calls", dependencies=[Depends(auth)])
+    async def dashboard_export_calls(request: Request):
+        fmt = request.query_params.get("format", "json")
+        from_date = request.query_params.get("from", "")
+        to_date = request.query_params.get("to", "")
+
+        from_ts = 0.0
+        to_ts = 0.0
+        # Interpret date-only values as UTC midnight: JS ``new Date('YYYY-MM-DD')``
+        # is UTC per the ES spec, while naive ``fromisoformat`` used the server's
+        # LOCAL timezone — the same export query returned different ranges from
+        # the two SDKs.
+        if from_date:
+            try:
+                _dt = datetime.fromisoformat(from_date)
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=timezone.utc)
+                from_ts = _dt.timestamp()
+            except ValueError:
+                pass
+        if to_date:
+            try:
+                _dt = datetime.fromisoformat(to_date)
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=timezone.utc)
+                to_ts = _dt.timestamp()
+            except ValueError:
+                pass
+
+        if from_ts or to_ts:
+            calls = store.get_calls_in_range(from_ts=from_ts, to_ts=to_ts)
+        else:
+            calls = store.get_calls(limit=10000)
+
+        if fmt == "csv":
+            from getpatter.dashboard.export import calls_to_csv
+
+            csv_data = calls_to_csv(calls)
+            return StreamingResponse(
+                iter([csv_data]),
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": "attachment; filename=patter_calls.csv"
+                },
+            )
+        else:
+            from getpatter.dashboard.export import calls_to_json
+
+            json_data = calls_to_json(calls)
+            return StreamingResponse(
+                iter([json_data]),
+                media_type="application/json",
+                headers={
+                    "Content-Disposition": "attachment; filename=patter_calls.json"
+                },
+            )

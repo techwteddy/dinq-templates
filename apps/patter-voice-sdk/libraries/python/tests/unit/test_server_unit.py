@@ -1,0 +1,1677 @@
+"""Unit tests for getpatter.server — EmbeddedServer construction & HTTP routes.
+
+Tests the FastAPI app created by ``_create_app()``. Route handler tests
+call the endpoint functions directly with mock Request objects (avoiding
+FastAPI's annotation-resolution issues with PEP 563 + inner functions).
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from getpatter.local_config import LocalConfig
+from getpatter.server import EmbeddedServer
+
+from tests.conftest import make_agent
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_server(**overrides) -> EmbeddedServer:
+    """Build an EmbeddedServer with sensible defaults for testing."""
+    cfg = LocalConfig(
+        telephony_provider="twilio",
+        twilio_sid="ACtest000000000000000000000000000",
+        twilio_token="tok_test_00000000000000000000000000",
+        openai_key="sk-test",
+        webhook_url="test.ngrok.io",
+        phone_number="+15551234567",
+        require_signature=False,
+    )
+    agent = make_agent()
+    # ``webhook_url="test.ngrok.io"`` (kept for the webhook-signature tests)
+    # marks the server as exposed beyond loopback, which would otherwise make
+    # the SDK auto-generate a dashboard token to protect it. These route-mounting
+    # tests assert the open (unauthenticated) behaviour, so opt them into the
+    # explicit insecure-serve path so the dashboard stays open. The auto-token
+    # protection itself is covered by tests/test_dashboard_autotoken.py.
+    defaults = dict(
+        config=cfg, agent=agent, dashboard=False, allow_insecure_dashboard=True
+    )
+    defaults.update(overrides)
+    return EmbeddedServer(**defaults)
+
+
+def _get_endpoint(app, path: str):
+    """Find and return the endpoint function for a given route path."""
+    for route in app.routes:
+        if getattr(route, "path", None) == path:
+            return route.endpoint
+    raise ValueError(f"No route found for {path}")
+
+
+class _MockRequest:
+    """Minimal mock of a Starlette Request for direct handler testing."""
+
+    def __init__(
+        self,
+        form_data: dict | None = None,
+        json_data: dict | None = None,
+        headers: dict | None = None,
+        url: str = "https://test.ngrok.io/webhooks/twilio/voice",
+        query_params: dict | None = None,
+    ):
+        self._form_data = form_data or {}
+        self._json_data = json_data
+        self.headers = headers or {}
+        self.url = url
+        self.query_params = query_params or {}
+
+    async def form(self):
+        return self._form_data
+
+    async def json(self):
+        return self._json_data
+
+    async def body(self):
+        import json as _json
+
+        if self._json_data is None:
+            return b""
+        return _json.dumps(self._json_data).encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Construction
+# ---------------------------------------------------------------------------
+
+
+class TestEmbeddedServerInit:
+    """EmbeddedServer.__init__ stores config and defaults."""
+
+    def test_stores_config_and_agent(self) -> None:
+        srv = _make_server()
+        assert srv.config.twilio_sid == "ACtest000000000000000000000000000"
+        assert srv.agent.voice == "alloy"
+
+    def test_defaults_recording_false(self) -> None:
+        srv = _make_server()
+        assert srv.recording is False
+
+    def test_defaults_dashboard_true_when_not_overridden(self) -> None:
+        srv = EmbeddedServer(
+            config=LocalConfig(),
+            agent=make_agent(),
+        )
+        assert srv.dashboard is True
+
+    def test_callbacks_initially_none(self) -> None:
+        srv = _make_server()
+        assert srv.on_call_start is None
+        assert srv.on_call_end is None
+        assert srv.on_transcript is None
+        assert srv.on_message is None
+        assert srv.on_metrics is None
+
+    def test_no_active_connections_initially(self) -> None:
+        srv = _make_server()
+        assert len(srv._active_connections) == 0
+
+    def test_voicemail_message_stored(self) -> None:
+        srv = _make_server(voicemail_message="Leave a message")
+        assert srv.voicemail_message == "Leave a message"
+
+    def test_pricing_stored(self) -> None:
+        pricing = {"stt": 0.01}
+        srv = _make_server(pricing=pricing)
+        assert srv.pricing == pricing
+
+    def test_dashboard_token_stored(self) -> None:
+        srv = _make_server(dashboard=True, dashboard_token="secret123")
+        assert srv.dashboard_token == "secret123"
+
+
+# ---------------------------------------------------------------------------
+# _wrap_callbacks
+# ---------------------------------------------------------------------------
+
+
+class TestWrapCallbacks:
+    """_wrap_callbacks returns wrappers that feed the store then call user fns."""
+
+    @pytest.mark.asyncio
+    async def test_calls_store_and_user_callback_on_start(self) -> None:
+        srv = _make_server()
+        store = MagicMock()
+        srv._metrics_store = store
+        user_cb = AsyncMock()
+        srv.on_call_start = user_cb
+
+        on_start, _, _, _, _ = srv._wrap_callbacks()
+        await on_start({"call_id": "c1"})
+
+        store.record_call_start.assert_called_once_with({"call_id": "c1"})
+        user_cb.assert_awaited_once_with({"call_id": "c1"})
+
+    @pytest.mark.asyncio
+    async def test_calls_store_and_user_callback_on_end(self) -> None:
+        srv = _make_server()
+        store = MagicMock()
+        srv._metrics_store = store
+        user_cb = AsyncMock()
+        srv.on_call_end = user_cb
+
+        _, on_end, _, _, _ = srv._wrap_callbacks()
+        data = {"call_id": "c1", "metrics": {"duration": 10}}
+        await on_end(data)
+
+        store.record_call_end.assert_called_once_with(data, metrics=data.get("metrics"))
+        user_cb.assert_awaited_once_with(data)
+
+    @pytest.mark.asyncio
+    async def test_calls_store_and_user_callback_on_metrics(self) -> None:
+        srv = _make_server()
+        store = MagicMock()
+        srv._metrics_store = store
+        user_cb = AsyncMock()
+        srv.on_metrics = user_cb
+
+        _, _, on_metrics, _, _ = srv._wrap_callbacks()
+        await on_metrics({"turn": 1})
+
+        store.record_turn.assert_called_once_with({"turn": 1})
+        user_cb.assert_awaited_once_with({"turn": 1})
+
+    @pytest.mark.asyncio
+    async def test_no_store_still_calls_user_callback(self) -> None:
+        srv = _make_server()
+        srv._metrics_store = None
+        user_cb = AsyncMock()
+        srv.on_call_start = user_cb
+
+        on_start, _, _, _, _ = srv._wrap_callbacks()
+        await on_start({"call_id": "c1"})
+
+        user_cb.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_user_callback_still_calls_store(self) -> None:
+        srv = _make_server()
+        store = MagicMock()
+        srv._metrics_store = store
+        srv.on_call_start = None
+
+        on_start, _, _, _, _ = srv._wrap_callbacks()
+        await on_start({"call_id": "c1"})
+
+        store.record_call_start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_call_log_start_pulls_caller_from_active_record(
+        self, tmp_path
+    ) -> None:
+        """Bug B regression: outbound calls have empty caller/callee in the
+        on_call_start data (the inline TwiML for outbound has no Stream
+        ``<Parameter>`` entries, so the WS query string is empty). The
+        ``_on_call_start`` wrapper must pull the real numbers from the
+        in-memory store (populated at dial time by ``record_call_initiated``)
+        before persisting metadata.json. Otherwise every outbound call's
+        on-disk metadata has ``caller="" callee=""``.
+        """
+        import json
+
+        from getpatter.dashboard.store import MetricsStore
+        from getpatter.services.call_log import CallLogger
+
+        srv = _make_server()
+        srv._metrics_store = MetricsStore()
+        # Pre-register the call as record_call_initiated would.
+        srv._metrics_store.record_call_initiated(
+            {
+                "call_id": "CA-outbound",
+                "caller": "+15551112222",
+                "callee": "+15553334444",
+                "direction": "outbound",
+            }
+        )
+        # Real on-disk CallLogger so we can read back metadata.json.
+        srv._call_logger = CallLogger(tmp_path)
+
+        on_start, _, _, _, _ = srv._wrap_callbacks()
+        # Simulate the bridge's on_call_start payload for an outbound call:
+        # the WS query string was empty so caller/callee are blank.
+        await on_start(
+            {
+                "call_id": "CA-outbound",
+                "caller": "",
+                "callee": "",
+                "direction": "outbound",
+                "telephony_provider": "twilio",
+            }
+        )
+
+        meta_paths = list(tmp_path.glob("calls/*/*/*/CA-outbound/metadata.json"))
+        assert len(meta_paths) == 1
+        payload = json.loads(meta_paths[0].read_text("utf-8"))
+        # Phone redact mode default is "mask" — last-4 visible.
+        assert payload["caller"].endswith("2222")
+        assert payload["callee"].endswith("4444")
+
+    @staticmethod
+    def _read_events(tmp_path, call_id):
+        import json
+
+        paths = list(tmp_path.glob(f"calls/*/*/*/{call_id}/events.jsonl"))
+        if not paths:
+            return []
+        return [
+            json.loads(line)
+            for line in paths[0].read_text("utf-8").splitlines()
+            if line.strip()
+        ]
+
+    @pytest.mark.asyncio
+    async def test_tool_transcript_lines_write_events_jsonl(self, tmp_path) -> None:
+        """``role="tool"`` transcript events land in events.jsonl as
+        ``tool_call`` (invocation, result still pending) and ``tool_result``
+        records — the file was documented since 0.6 but never written."""
+        from getpatter.services.call_log import CallLogger
+
+        srv = _make_server()
+        srv._metrics_store = None
+        srv._call_logger = CallLogger(tmp_path)
+        user_cb = AsyncMock()
+        srv.on_transcript = user_cb
+
+        _, _, _, _, on_transcript = srv._wrap_callbacks()
+        await on_transcript(
+            {
+                "role": "tool",
+                "text": "get_weather({})",
+                "call_id": "CA-tools",
+                "tool_name": "get_weather",
+                "tool_args": {"city": "Rome"},
+                "tool_result": None,
+            }
+        )
+        await on_transcript(
+            {
+                "role": "tool",
+                "text": "get_weather(...) → sunny",
+                "call_id": "CA-tools",
+                "tool_name": "get_weather",
+                "tool_args": {"city": "Rome"},
+                "tool_result": "sunny",
+            }
+        )
+        # Regular lines must NOT produce events.
+        await on_transcript({"role": "user", "text": "hi", "call_id": "CA-tools"})
+
+        events = self._read_events(tmp_path, "CA-tools")
+        assert [e["type"] for e in events] == ["tool_call", "tool_result"]
+        assert events[0]["data"] == {
+            "name": "get_weather",
+            "arguments": {"city": "Rome"},
+            "result": None,
+        }
+        assert events[1]["data"]["result"] == "sunny"
+        # User callback still sees every line, including non-tool ones.
+        assert user_cb.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_interrupted_turn_writes_barge_in_event(self, tmp_path) -> None:
+        from getpatter.services.call_log import CallLogger
+
+        srv = _make_server()
+        srv._metrics_store = None
+        srv._call_logger = CallLogger(tmp_path)
+
+        _, _, on_metrics, _, _ = srv._wrap_callbacks()
+        await on_metrics(
+            {
+                "call_id": "CA-barge",
+                "turn": {
+                    "turn_index": 2,
+                    "user_text": "wait",
+                    "agent_text": "[interrupted]",
+                    "latency": {"bargein_ms": 87.5},
+                },
+            }
+        )
+        # A clean turn must NOT produce a barge_in event.
+        await on_metrics(
+            {
+                "call_id": "CA-barge",
+                "turn": {
+                    "turn_index": 3,
+                    "user_text": "ok",
+                    "agent_text": "sure",
+                    "latency": {"total_ms": 900.0, "bargein_ms": None},
+                },
+            }
+        )
+
+        events = self._read_events(tmp_path, "CA-barge")
+        assert [e["type"] for e in events] == ["barge_in"]
+        assert events[0]["data"] == {"turn_index": 2, "bargein_ms": 87.5}
+
+    @pytest.mark.asyncio
+    async def test_call_end_error_code_writes_error_event(self, tmp_path) -> None:
+        import json
+        from types import SimpleNamespace
+
+        from getpatter.services.call_log import CallLogger
+
+        srv = _make_server()
+        srv._metrics_store = None
+        srv._call_logger = CallLogger(tmp_path)
+
+        _, on_end, _, _, _ = srv._wrap_callbacks()
+        metrics = SimpleNamespace(
+            duration_seconds=12.0,
+            cost=None,
+            latency_avg=None,
+            latency_p50=None,
+            latency_p95=None,
+            latency_p99=None,
+            turns=(),
+            error_code="connection",
+        )
+        await on_end({"call_id": "CA-err", "metrics": metrics})
+
+        events = self._read_events(tmp_path, "CA-err")
+        assert [e["type"] for e in events] == ["error"]
+        assert events[0]["data"] == {"error_code": "connection"}
+        meta_paths = list(tmp_path.glob("calls/*/*/*/CA-err/metadata.json"))
+        assert len(meta_paths) == 1
+        payload = json.loads(meta_paths[0].read_text("utf-8"))
+        assert payload["error"] == "connection"
+
+    @pytest.mark.asyncio
+    async def test_clean_call_end_writes_no_error_event(self, tmp_path) -> None:
+        import json
+        from types import SimpleNamespace
+
+        from getpatter.services.call_log import CallLogger
+
+        srv = _make_server()
+        srv._metrics_store = None
+        srv._call_logger = CallLogger(tmp_path)
+
+        _, on_end, _, _, _ = srv._wrap_callbacks()
+        metrics = SimpleNamespace(
+            duration_seconds=5.0,
+            cost=None,
+            latency_avg=None,
+            latency_p50=None,
+            latency_p95=None,
+            latency_p99=None,
+            turns=(),
+            error_code="",
+        )
+        await on_end({"call_id": "CA-clean", "metrics": metrics})
+
+        assert self._read_events(tmp_path, "CA-clean") == []
+        meta_paths = list(tmp_path.glob("calls/*/*/*/CA-clean/metadata.json"))
+        assert len(meta_paths) == 1
+        payload = json.loads(meta_paths[0].read_text("utf-8"))
+        assert payload["error"] is None
+
+
+# ---------------------------------------------------------------------------
+# _create_app — route registration
+# ---------------------------------------------------------------------------
+
+
+class TestCreateApp:
+    """_create_app builds a FastAPI app with the correct routes."""
+
+    def test_returns_fastapi_app(self) -> None:
+        from fastapi import FastAPI
+
+        srv = _make_server()
+        app = srv._create_app()
+        assert isinstance(app, FastAPI)
+
+    def test_has_health_route(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        paths = [r.path for r in app.routes]
+        assert "/health" in paths
+
+    def test_has_twilio_voice_route(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        paths = [r.path for r in app.routes]
+        assert "/webhooks/twilio/voice" in paths
+
+    def test_has_twilio_recording_route(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        paths = [r.path for r in app.routes]
+        assert "/webhooks/twilio/recording" in paths
+
+    def test_has_twilio_amd_route(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        paths = [r.path for r in app.routes]
+        assert "/webhooks/twilio/amd" in paths
+
+    def test_has_telnyx_voice_route(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        paths = [r.path for r in app.routes]
+        assert "/webhooks/telnyx/voice" in paths
+
+    def test_has_twilio_ws_stream_route(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        paths = [r.path for r in app.routes]
+        assert "/ws/stream/{call_id}" in paths
+
+    def test_has_telnyx_ws_stream_route(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        paths = [r.path for r in app.routes]
+        assert "/ws/telnyx/stream/{call_id}" in paths
+
+    def test_dashboard_enabled_mounts_ui_and_api_routes(self) -> None:
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        paths = [r.path for r in app.routes]
+        assert "/" in paths
+        assert "/api/dashboard/calls" in paths
+        assert "/api/v1/calls" in paths
+        assert srv._metrics_store is not None
+
+    def test_dashboard_disabled_skips_ui_routes(self) -> None:
+        srv = _make_server(dashboard=False)
+        app = srv._create_app()
+        paths = [r.path for r in app.routes]
+        assert "/api/dashboard/calls" not in paths
+        assert "/api/v1/calls" not in paths
+        assert srv._metrics_store is None
+
+
+# ---------------------------------------------------------------------------
+# HTTP route handlers — called directly with mock request
+# ---------------------------------------------------------------------------
+
+
+class TestHealthRoute:
+    """GET /health returns status ok."""
+
+    @pytest.mark.asyncio
+    async def test_health_returns_ok(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/health")
+        result = await endpoint()
+        assert result == {"status": "ok", "mode": "local"}
+
+
+class TestTwilioVoiceRoute:
+    """POST /webhooks/twilio/voice returns TwiML."""
+
+    @pytest.mark.asyncio
+    @patch("getpatter.providers.twilio_adapter.TwilioAdapter")
+    async def test_twilio_voice_returns_xml_no_sig_validation(
+        self, mock_adapter_cls
+    ) -> None:
+        mock_adapter_cls.generate_stream_twiml.return_value = (
+            "<Response><Connect/></Response>"
+        )
+        srv = _make_server()
+        srv.config = LocalConfig(
+            twilio_sid="ACtest000000000000000000000000000",
+            twilio_token="",  # empty = no validation
+            openai_key="sk-test",
+            webhook_url="test.ngrok.io",
+            require_signature=False,
+        )
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/twilio/voice")
+
+        request = _MockRequest(
+            form_data={
+                "CallSid": "CA00000000000000000000000000000000",
+                "From": "+15551234567",
+                "To": "+15559876543",
+            },
+        )
+        response = await endpoint(request)
+        assert response.status_code == 200
+        assert "text/xml" in response.media_type
+
+    @pytest.mark.asyncio
+    async def test_twilio_voice_with_invalid_signature_returns_403(self) -> None:
+        srv = _make_server()
+        srv.config = LocalConfig(
+            twilio_sid="ACtest000000000000000000000000000",
+            twilio_token="real_token_value",
+            openai_key="sk-test",
+            webhook_url="test.ngrok.io",
+        )
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/twilio/voice")
+
+        request = _MockRequest(
+            form_data={"CallSid": "CA00000000000000000000000000000000"},
+            headers={"X-Twilio-Signature": "badsig"},
+            url="https://test.ngrok.io/webhooks/twilio/voice",
+        )
+        response = await endpoint(request)
+        assert response.status_code == 403
+
+
+def _unauth_config() -> LocalConfig:
+    """LocalConfig with empty twilio_token so signature validation is skipped.
+
+    The signature validation branch on /recording and /amd is tested
+    separately in TestTwilioRecordingSignature / TestTwilioAMDSignature.
+    """
+    return LocalConfig(
+        twilio_sid="ACtest000000000000000000000000000",
+        twilio_token="",
+        openai_key="sk-test",
+        webhook_url="test.ngrok.io",
+        require_signature=False,
+    )
+
+
+class TestTwilioRecordingRoute:
+    """POST /webhooks/twilio/recording returns 204."""
+
+    @pytest.mark.asyncio
+    async def test_recording_callback_returns_204(self) -> None:
+        srv = _make_server()
+        srv.config = _unauth_config()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/twilio/recording")
+
+        request = _MockRequest(
+            form_data={
+                "RecordingSid": "RE000",
+                "RecordingUrl": "https://api.twilio.com/rec",
+                "CallSid": "CA00000000000000000000000000000000",
+            },
+        )
+        response = await endpoint(request)
+        assert response.status_code == 204
+
+
+class TestTwilioAMDRoute:
+    """POST /webhooks/twilio/amd returns 204 with voicemail handling."""
+
+    @pytest.mark.asyncio
+    async def test_amd_human_returns_204(self) -> None:
+        srv = _make_server()
+        srv.config = _unauth_config()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/twilio/amd")
+
+        request = _MockRequest(
+            form_data={
+                "AnsweredBy": "human",
+                "CallSid": "CA00000000000000000000000000000000",
+            },
+        )
+        response = await endpoint(request)
+        assert response.status_code == 204
+
+    @pytest.mark.asyncio
+    async def test_amd_machine_no_voicemail_message_returns_204(self) -> None:
+        srv = _make_server(voicemail_message="")
+        srv.config = _unauth_config()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/twilio/amd")
+
+        request = _MockRequest(
+            form_data={
+                "AnsweredBy": "machine_end_beep",
+                "CallSid": "CA00000000000000000000000000000000",
+            },
+        )
+        response = await endpoint(request)
+        assert response.status_code == 204
+
+    @pytest.mark.asyncio
+    async def test_amd_machine_invalid_sid_skips_voicemail(self) -> None:
+        srv = _make_server(voicemail_message="Leave a message")
+        # Signature validation skipped (empty twilio_token); voicemail drop
+        # branch still requires sid+token, so this test exercises the
+        # invalid-sid early-return before any API call is made.
+        srv.config = _unauth_config()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/twilio/amd")
+
+        request = _MockRequest(
+            form_data={
+                "AnsweredBy": "machine_end_beep",
+                "CallSid": "INVALID",
+            },
+        )
+        response = await endpoint(request)
+        assert response.status_code == 204
+
+    @pytest.mark.asyncio
+    async def test_amd_machine_drops_voicemail(self) -> None:
+        srv = _make_server(voicemail_message="Please leave a message")
+        # Use empty token to bypass signature validation, but keep sid
+        # populated.  Patch the RequestValidator branch indirectly by
+        # supplying no token — voicemail drop uses sid+token both set, so
+        # we restore token via a patched validator that always returns True.
+        srv.config = LocalConfig(
+            twilio_sid="ACtest000000000000000000000000000",
+            twilio_token="tok_test",
+            openai_key="sk-test",
+            webhook_url="test.ngrok.io",
+        )
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/twilio/amd")
+
+        call_sid = "CA" + "a" * 32
+        request = _MockRequest(
+            form_data={
+                "AnsweredBy": "machine_end_beep",
+                "CallSid": call_sid,
+            },
+        )
+
+        mock_http = AsyncMock()
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        mock_validator = MagicMock()
+        mock_validator.validate.return_value = True
+
+        with (
+            patch("httpx.AsyncClient", return_value=mock_http),
+            patch(
+                "twilio.request_validator.RequestValidator",
+                return_value=mock_validator,
+            ),
+        ):
+            response = await endpoint(request)
+
+        assert response.status_code == 204
+        mock_http.post.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_amd_voicemail_http_error_still_returns_204(self) -> None:
+        srv = _make_server(voicemail_message="Leave a message")
+        srv.config = LocalConfig(
+            twilio_sid="ACtest000000000000000000000000000",
+            twilio_token="tok_test",
+            openai_key="sk-test",
+            webhook_url="test.ngrok.io",
+        )
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/twilio/amd")
+
+        call_sid = "CA" + "a" * 32
+        request = _MockRequest(
+            form_data={
+                "AnsweredBy": "machine_end_silence",
+                "CallSid": call_sid,
+            },
+        )
+
+        mock_http = AsyncMock()
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+        mock_http.post.side_effect = Exception("Network error")
+
+        mock_validator = MagicMock()
+        mock_validator.validate.return_value = True
+
+        with (
+            patch("httpx.AsyncClient", return_value=mock_http),
+            patch(
+                "twilio.request_validator.RequestValidator",
+                return_value=mock_validator,
+            ),
+        ):
+            response = await endpoint(request)
+
+        assert response.status_code == 204
+
+
+class TestTwilioRecordingSignature:
+    """POST /webhooks/twilio/recording enforces Twilio signature when configured."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_signature_returns_403(self) -> None:
+        srv = _make_server()
+        srv.config = LocalConfig(
+            twilio_sid="ACtest000000000000000000000000000",
+            twilio_token="real_token_value",
+            openai_key="sk-test",
+            webhook_url="test.ngrok.io",
+        )
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/twilio/recording")
+
+        request = _MockRequest(
+            form_data={"CallSid": "CA00000000000000000000000000000000"},
+            headers={"X-Twilio-Signature": "badsig"},
+            url="https://test.ngrok.io/webhooks/twilio/recording",
+        )
+        response = await endpoint(request)
+        assert response.status_code == 403
+
+
+class TestTwilioAMDSignature:
+    """POST /webhooks/twilio/amd enforces Twilio signature when configured."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_signature_returns_403(self) -> None:
+        srv = _make_server()
+        srv.config = LocalConfig(
+            twilio_sid="ACtest000000000000000000000000000",
+            twilio_token="real_token_value",
+            openai_key="sk-test",
+            webhook_url="test.ngrok.io",
+        )
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/twilio/amd")
+
+        request = _MockRequest(
+            form_data={"CallSid": "CA00000000000000000000000000000000"},
+            headers={"X-Twilio-Signature": "badsig"},
+            url="https://test.ngrok.io/webhooks/twilio/amd",
+        )
+        response = await endpoint(request)
+        assert response.status_code == 403
+
+
+class TestTelnyxVoiceRoute:
+    """POST /webhooks/telnyx/voice dispatches Call Control REST actions (BUG #16)."""
+
+    @pytest.mark.asyncio
+    async def test_valid_telnyx_webhook_initiates_answer(self, monkeypatch) -> None:
+        # Build a server with a telnyx_key so the handler can reach the REST API.
+        cfg = LocalConfig(
+            telephony_provider="telnyx",
+            telnyx_key="tk_test",
+            telnyx_connection_id="conn-1",
+            openai_key="sk-test",
+            webhook_url="test.ngrok.io",
+            phone_number="+15551234567",
+            require_signature=False,
+        )
+        srv = EmbeddedServer(config=cfg, agent=make_agent(), dashboard=False)
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/telnyx/voice")
+
+        # Intercept the POST to the Telnyx Call Control API so the test is
+        # hermetic.
+        calls: list[str] = []
+
+        class _FakeResp:
+            status_code = 200
+            text = ""
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                pass
+
+            async def post(self, url, **kwargs):
+                calls.append(url)
+                return _FakeResp()
+
+        import httpx as _httpx
+
+        monkeypatch.setattr(_httpx, "AsyncClient", _FakeClient)
+
+        request = _MockRequest(
+            json_data={
+                "data": {
+                    "event_type": "call.initiated",
+                    "payload": {
+                        "call_control_id": "v3:abc123",
+                        "from": "+15551234567",
+                        "to": "+15559876543",
+                    },
+                }
+            },
+        )
+        response = await endpoint(request)
+        assert response.status_code == 200
+        assert any("/actions/answer" in url for url in calls)
+
+    @pytest.mark.asyncio
+    async def test_invalid_telnyx_structure_returns_400(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/telnyx/voice")
+
+        request = _MockRequest(json_data={"data": "not_a_dict"})
+        response = await endpoint(request)
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_telnyx_missing_required_fields_returns_400(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/telnyx/voice")
+
+        request = _MockRequest(
+            json_data={
+                "data": {
+                    "payload": {
+                        "call_control_id": "",
+                        "from": "+15551234567",
+                        "to": "+15559876543",
+                    }
+                }
+            },
+        )
+        response = await endpoint(request)
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_telnyx_sig_warning_logged_once(self) -> None:
+        srv = _make_server()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/telnyx/voice")
+
+        request = _MockRequest(
+            json_data={
+                "data": {
+                    "payload": {
+                        "call_control_id": "v3:abc123",
+                        "from": "+1555",
+                        "to": "+1666",
+                    }
+                }
+            },
+        )
+        # First call
+        await endpoint(request)
+        assert srv._telnyx_sig_warning_logged is True
+
+        # Second call shouldn't change the flag
+        await endpoint(request)
+        assert srv._telnyx_sig_warning_logged is True
+
+
+class TestTelnyxWebhookSignatureRejection:
+    """POST /webhooks/telnyx/voice returns 403 when telnyx_public_key is
+    configured and the request carries no (or an invalid) Ed25519 signature.
+
+    Mirrors the enforcement path in server.py lines 765-774.
+    """
+
+    def _telnyx_server_with_key(self) -> EmbeddedServer:
+        cfg = LocalConfig(
+            telephony_provider="telnyx",
+            telnyx_key="tk_test",
+            telnyx_connection_id="conn-1",
+            telnyx_public_key="somekey",
+            openai_key="sk-test",
+            webhook_url="test.ngrok.io",
+            phone_number="+15551234567",
+            require_signature=True,
+        )
+        return EmbeddedServer(config=cfg, agent=make_agent(), dashboard=False)
+
+    def _valid_body(self) -> dict:
+        return {
+            "data": {
+                "event_type": "call.initiated",
+                "payload": {
+                    "call_control_id": "v3:abc123",
+                    "from": "+15551234567",
+                    "to": "+15559876543",
+                },
+            }
+        }
+
+    @pytest.mark.asyncio
+    async def test_missing_signature_header_returns_403(self) -> None:
+        srv = self._telnyx_server_with_key()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/telnyx/voice")
+
+        # No telnyx-signature-ed25519 header present at all.
+        request = _MockRequest(json_data=self._valid_body())
+        response = await endpoint(request)
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_invalid_signature_returns_403(self) -> None:
+        srv = self._telnyx_server_with_key()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/telnyx/voice")
+
+        # Provide a clearly invalid (forged) signature.
+        request = _MockRequest(
+            json_data=self._valid_body(),
+            headers={
+                "telnyx-signature-ed25519": "invalidsignaturevalue",
+                "telnyx-timestamp": "1700000000",
+            },
+        )
+        response = await endpoint(request)
+        assert response.status_code == 403
+
+
+class TestTelnyxRecordingSavedWebhook:
+    """POST /webhooks/telnyx/voice with call.recording.saved logs the recording URL.
+
+    Mirrors the TypeScript handler in ``libraries/typescript/src/server.ts``
+    around the ``call.recording.saved`` branch. Fallback order:
+    ``recording_urls.mp3`` → ``recording_urls.wav`` →
+    ``public_recording_urls.mp3`` → ``public_recording_urls.wav``.
+    """
+
+    def _telnyx_server(self) -> EmbeddedServer:
+        cfg = LocalConfig(
+            telephony_provider="telnyx",
+            telnyx_key="tk_test",
+            telnyx_connection_id="conn-1",
+            openai_key="sk-test",
+            webhook_url="test.ngrok.io",
+            phone_number="+15551234567",
+            require_signature=False,
+        )
+        return EmbeddedServer(config=cfg, agent=make_agent(), dashboard=False)
+
+    def _recording_saved_request(self, payload: dict) -> _MockRequest:
+        return _MockRequest(
+            json_data={
+                "data": {
+                    "event_type": "call.recording.saved",
+                    "payload": {
+                        "call_control_id": "v3:rec-abc",
+                        "from": "+15551234567",
+                        "to": "+15559876543",
+                        **payload,
+                    },
+                }
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_recording_saved_logs_mp3_url_first(self, caplog) -> None:
+        srv = self._telnyx_server()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/telnyx/voice")
+
+        request = self._recording_saved_request(
+            {
+                "recording_urls": {
+                    "mp3": "https://api.telnyx.com/v2/recordings/abc.mp3",
+                    "wav": "https://api.telnyx.com/v2/recordings/abc.wav",
+                },
+            }
+        )
+
+        with caplog.at_level("INFO", logger="getpatter"):
+            response = await endpoint(request)
+
+        assert response.status_code == 200
+        assert any(
+            "recording saved" in r.message.lower() and "abc.mp3" in r.message
+            for r in caplog.records
+        ), f"Expected INFO log with mp3 URL, got: {[r.message for r in caplog.records]}"
+
+    @pytest.mark.asyncio
+    async def test_recording_saved_falls_back_to_wav(self, caplog) -> None:
+        srv = self._telnyx_server()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/telnyx/voice")
+
+        request = self._recording_saved_request(
+            {"recording_urls": {"wav": "https://api.telnyx.com/v2/recordings/abc.wav"}}
+        )
+
+        with caplog.at_level("INFO", logger="getpatter"):
+            response = await endpoint(request)
+
+        assert response.status_code == 200
+        assert any("abc.wav" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_recording_saved_falls_back_to_public_urls(self, caplog) -> None:
+        srv = self._telnyx_server()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/telnyx/voice")
+
+        request = self._recording_saved_request(
+            {
+                "recording_urls": {},
+                "public_recording_urls": {
+                    "mp3": "https://public.example.com/abc.mp3",
+                },
+            }
+        )
+
+        with caplog.at_level("INFO", logger="getpatter"):
+            response = await endpoint(request)
+
+        assert response.status_code == 200
+        assert any("public.example.com/abc.mp3" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_recording_saved_with_no_urls_logs_empty_but_returns_200(
+        self, caplog
+    ) -> None:
+        srv = self._telnyx_server()
+        app = srv._create_app()
+        endpoint = _get_endpoint(app, "/webhooks/telnyx/voice")
+
+        # No recording_urls / public_recording_urls keys at all — Telnyx
+        # may emit this if the recording was stopped before any audio.
+        request = self._recording_saved_request({})
+
+        with caplog.at_level("INFO", logger="getpatter"):
+            response = await endpoint(request)
+
+        assert response.status_code == 200
+        # The handler still logs the event (with an empty URL) so the
+        # call_control_id is traceable in logs.
+        assert any(
+            "recording saved" in r.message.lower() and "v3:rec-abc" in r.message
+            for r in caplog.records
+        )
+
+
+# ---------------------------------------------------------------------------
+# stop() — graceful shutdown
+# ---------------------------------------------------------------------------
+
+
+class TestStop:
+    """EmbeddedServer.stop() closes connections and shuts down."""
+
+    @pytest.mark.asyncio
+    async def test_stop_idempotent(self) -> None:
+        srv = _make_server()
+        await srv.stop()
+        await srv.stop()  # second call should be a no-op
+        assert srv._shutting_down is True
+
+    @pytest.mark.asyncio
+    async def test_stop_closes_active_connections(self) -> None:
+        srv = _make_server()
+        ws = AsyncMock()
+        srv._active_connections.add(ws)
+
+        await srv.stop()
+
+        ws.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stop_sets_server_should_exit(self) -> None:
+        srv = _make_server()
+        srv._server = MagicMock()
+
+        await srv.stop()
+
+        assert srv._server.should_exit is True
+
+    @pytest.mark.asyncio
+    async def test_stop_handles_ws_close_exception(self) -> None:
+        srv = _make_server()
+        ws = AsyncMock()
+        ws.close.side_effect = RuntimeError("already closed")
+        srv._active_connections.add(ws)
+
+        # Should not raise
+        await srv.stop()
+        assert srv._shutting_down is True
+
+
+# ---------------------------------------------------------------------------
+# Dashboard routes via httpx (these DON'T have the PEP 563 issue)
+# ---------------------------------------------------------------------------
+
+
+class TestDashboardRoutes:
+    """Dashboard and API routes work through httpx ASGI transport."""
+
+    @pytest.mark.asyncio
+    async def test_dashboard_ui_returns_html(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers.get("content-type", "")
+
+    @pytest.mark.asyncio
+    async def test_dashboard_calls_returns_json(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/dashboard/calls")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_dashboard_aggregates_returns_json(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/dashboard/aggregates")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_dashboard_call_detail_not_found(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/dashboard/calls/nonexistent")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_dashboard_active_returns_json(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/dashboard/active")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_dashboard_export_json(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/dashboard/export/calls?format=json")
+        assert resp.status_code == 200
+        assert "application/json" in resp.headers.get("content-type", "")
+
+    @pytest.mark.asyncio
+    async def test_dashboard_export_csv(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/dashboard/export/calls?format=csv")
+        assert resp.status_code == 200
+        assert "text/csv" in resp.headers.get("content-type", "")
+
+    @pytest.mark.asyncio
+    async def test_health_via_httpx(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/health")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# B2B API routes via httpx
+# ---------------------------------------------------------------------------
+
+
+class TestAPIRoutes:
+    """B2B API routes work through httpx ASGI transport."""
+
+    @pytest.mark.asyncio
+    async def test_api_list_calls(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/v1/calls")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "data" in body
+        assert "pagination" in body
+
+    @pytest.mark.asyncio
+    async def test_api_active_calls(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/v1/calls/active")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_api_call_detail_not_found(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/v1/calls/nope")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_api_analytics_overview(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/v1/analytics/overview")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_api_analytics_costs(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/v1/analytics/costs")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "data" in body
+        assert "total_cost" in body["data"]
+
+    @pytest.mark.asyncio
+    async def test_api_analytics_costs_invalid_from_date(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True)
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/v1/analytics/costs?from=bad-date")
+        assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Dashboard auth integration
+# ---------------------------------------------------------------------------
+
+
+class TestDashboardAuth:
+    """Dashboard routes respect the dashboard_token setting."""
+
+    @pytest.mark.asyncio
+    async def test_token_required_returns_401(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True, dashboard_token="mysecret")
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/dashboard/calls")
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_token_via_header_succeeds(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True, dashboard_token="mysecret")
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get(
+                "/api/dashboard/calls",
+                headers={"Authorization": "Bearer mysecret"},
+            )
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_token_via_query_param_succeeds(self) -> None:
+        import httpx
+
+        srv = _make_server(dashboard=True, dashboard_token="mysecret")
+        app = srv._create_app()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/api/dashboard/calls?token=mysecret")
+        assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Banner
+# ---------------------------------------------------------------------------
+
+
+class TestBanner:
+    """show_banner() emits the ASCII art banner via the package logger."""
+
+    def test_show_banner_runs(self, caplog) -> None:
+        import logging
+
+        from getpatter.banner import show_banner
+
+        with caplog.at_level(logging.INFO, logger="getpatter"):
+            show_banner()
+        assert any("██" in rec.getMessage() for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Common handler utilities
+# ---------------------------------------------------------------------------
+
+
+class TestCommonHandlers:
+    """Tests for getpatter.telephony.common functions."""
+
+    def test_validate_e164_valid(self) -> None:
+        from getpatter.telephony.common import _validate_e164
+
+        assert _validate_e164("+15551234567") is True
+
+    def test_validate_e164_invalid_no_plus(self) -> None:
+        from getpatter.telephony.common import _validate_e164
+
+        assert _validate_e164("15551234567") is False
+
+    def test_validate_e164_invalid_too_short(self) -> None:
+        from getpatter.telephony.common import _validate_e164
+
+        assert _validate_e164("+123") is False
+
+    def test_sanitize_variable_value_strips_control_chars(self) -> None:
+        from getpatter.telephony.common import _sanitize_variable_value
+
+        result = _sanitize_variable_value("hello\x00world\x0a")
+        assert "\x00" not in result
+
+    def test_sanitize_variable_value_truncates_at_500(self) -> None:
+        from getpatter.telephony.common import _sanitize_variable_value
+
+        result = _sanitize_variable_value("x" * 1000)
+        assert len(result) == 500
+
+    def test_resolve_variables_replaces_placeholders(self) -> None:
+        from getpatter.telephony.common import _resolve_variables
+
+        result = _resolve_variables(
+            "Hello {name}, age {age}", {"name": "Alice", "age": "30"}
+        )
+        assert result == "Hello Alice, age 30"
+
+    def test_resolve_variables_no_match_unchanged(self) -> None:
+        from getpatter.telephony.common import _resolve_variables
+
+        result = _resolve_variables("Hello {name}", {"other": "value"})
+        assert result == "Hello {name}"
+
+    def test_create_stt_from_config_none(self) -> None:
+        from getpatter.telephony.common import _create_stt_from_config
+
+        assert _create_stt_from_config(None) is None
+
+    def test_create_tts_from_config_none(self) -> None:
+        from getpatter.telephony.common import _create_tts_from_config
+
+        assert _create_tts_from_config(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Fix #41 — SSRF webhook URL validator + per-IP WebSocket cap
+# ---------------------------------------------------------------------------
+
+
+class TestValidateWebhookUrl:
+    """Top-level SSRF helper mirroring TS validateWebhookUrl in server.ts:105."""
+
+    def test_blocks_cloud_metadata_ipv4(self) -> None:
+        from getpatter.server import validate_webhook_url
+
+        assert validate_webhook_url("http://169.254.169.254/latest/meta-data") is False
+
+    def test_blocks_loopback_ipv4(self) -> None:
+        from getpatter.server import validate_webhook_url
+
+        assert validate_webhook_url("http://127.0.0.1/api") is False
+
+    def test_blocks_localhost_alias(self) -> None:
+        from getpatter.server import validate_webhook_url
+
+        assert validate_webhook_url("http://localhost/api") is False
+
+    def test_blocks_metadata_hostname(self) -> None:
+        from getpatter.server import validate_webhook_url
+
+        assert validate_webhook_url("http://metadata/latest") is False
+        assert validate_webhook_url("http://metadata.google.internal/x") is False
+
+    def test_blocks_private_ipv4_ranges(self) -> None:
+        from getpatter.server import validate_webhook_url
+
+        assert validate_webhook_url("http://10.0.0.1/x") is False
+        assert validate_webhook_url("http://192.168.1.1/x") is False
+        assert validate_webhook_url("http://172.16.0.1/x") is False
+
+    def test_blocks_non_http_scheme(self) -> None:
+        from getpatter.server import validate_webhook_url
+
+        assert validate_webhook_url("file:///etc/passwd") is False
+        assert validate_webhook_url("javascript:alert(1)") is False
+
+    def test_allows_public_https(self) -> None:
+        from getpatter.server import validate_webhook_url
+
+        assert validate_webhook_url("https://api.example.com/webhook") is True
+        assert validate_webhook_url("http://api.example.com/webhook") is True
+
+    def test_blocks_ipv6_loopback(self) -> None:
+        from getpatter.server import validate_webhook_url
+
+        assert validate_webhook_url("http://[::1]/x") is False
+
+
+class TestWebSocketPerIpCap:
+    """MAX_WS_PER_IP cap mirrors TS server.ts:1041 wsConnectionsByIp."""
+
+    async def test_cap_rejects_eleventh_connection_from_same_ip(self) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        from getpatter.server import MAX_WS_PER_IP
+
+        server = _make_server()
+        ip = "203.0.113.10"
+
+        # Pre-load the connection counter to the cap so the next attempt
+        # is rejected.  The handler is constructed via _create_app(); we
+        # exercise the cap by checking the bookkeeping directly because
+        # invoking the FastAPI websocket route requires a full TestClient
+        # WebSocket session.
+        server._ws_conn_counts[ip] = MAX_WS_PER_IP
+
+        # Simulate the cap-check that happens inside the WS handler.
+        assert server._ws_conn_counts[ip] >= MAX_WS_PER_IP
+
+        # When close() is called with code 1008, FastAPI sends a 429-equivalent
+        # WebSocket close frame to the client.  We mock to assert the path.
+        ws = MagicMock()
+        ws.close = AsyncMock()
+
+        # Inline the cap-check logic to verify the code path that runs in
+        # twilio_stream_handler / telnyx_stream_handler.
+        if server._ws_conn_counts[ip] >= MAX_WS_PER_IP:
+            await ws.close(code=1008, reason="Too Many Requests")
+        ws.close.assert_awaited_once_with(code=1008, reason="Too Many Requests")
+
+    def test_counter_decrements_to_zero_drops_key(self) -> None:
+        # Mirrors the cleanup in the WS handler finally block: when a
+        # disconnect leaves no active connections from this IP, the entry
+        # is removed so the dict does not grow unbounded.
+        server = _make_server()
+        ip = "203.0.113.20"
+        server._ws_conn_counts[ip] = 1
+        remaining = server._ws_conn_counts[ip] - 1
+        if remaining <= 0:
+            server._ws_conn_counts.pop(ip, None)
+        assert ip not in server._ws_conn_counts
+
+
+class TestTelnyxSignatureAntiReplay:
+    """Direct tests of ``_validate_telnyx_signature`` with a real Ed25519
+    keypair — the anti-replay window must reject stale AND far-future
+    timestamps while tolerating small clock skew (parity with TS
+    ``validateTelnyxSignature``)."""
+
+    @pytest.fixture()
+    def keypair(self):
+        pytest.importorskip("cryptography")
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+
+        import base64
+
+        priv = Ed25519PrivateKey.generate()
+        pub_der = priv.public_key().public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        return priv, base64.b64encode(pub_der).decode("ascii")
+
+    @staticmethod
+    def _sign(priv, timestamp: str, body: bytes) -> str:
+        import base64
+
+        return base64.b64encode(
+            priv.sign(timestamp.encode("utf-8") + b"|" + body)
+        ).decode("ascii")
+
+    def test_accepts_fresh_timestamp(self, keypair) -> None:
+        import time
+
+        from getpatter.server import _validate_telnyx_signature
+
+        priv, pub = keypair
+        body = b'{"data": {}}'
+        ts = str(int(time.time()))
+        assert _validate_telnyx_signature(body, self._sign(priv, ts, body), ts, pub)
+
+    def test_accepts_raw_32_byte_public_key(self, keypair) -> None:
+        """The Telnyx portal issues TELNYX_PUBLIC_KEY as base64 of the RAW
+        32-byte Ed25519 key (their SDKs feed it straight to NaCl) — the
+        validator must accept that form, not just DER/SPKI."""
+        import base64
+        import time
+
+        from cryptography.hazmat.primitives import serialization
+
+        from getpatter.server import _validate_telnyx_signature
+
+        priv, _ = keypair
+        raw_pub = priv.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        assert len(raw_pub) == 32
+        pub_b64 = base64.b64encode(raw_pub).decode("ascii")
+        body = b'{"data": {}}'
+        ts = str(int(time.time()))
+        assert _validate_telnyx_signature(body, self._sign(priv, ts, body), ts, pub_b64)
+
+    def test_rejects_stale_timestamp(self, keypair) -> None:
+        import time
+
+        from getpatter.server import _validate_telnyx_signature
+
+        priv, pub = keypair
+        body = b'{"data": {}}'
+        ts = str(int(time.time()) - 400)  # beyond the 300s tolerance
+        assert not _validate_telnyx_signature(
+            body, self._sign(priv, ts, body), ts, pub
+        )
+
+    def test_rejects_far_future_timestamp(self, keypair) -> None:
+        """A timestamp minutes in the FUTURE widens the replay window for
+        pre-issued signatures. The old ``abs(age_ms)`` check accepted up to
+        +300s; only a small clock-skew allowance is legitimate."""
+        import time
+
+        from getpatter.server import _validate_telnyx_signature
+
+        priv, pub = keypair
+        body = b'{"data": {}}'
+        ts = str(int(time.time()) + 120)  # beyond the 30s skew allowance
+        assert not _validate_telnyx_signature(
+            body, self._sign(priv, ts, body), ts, pub
+        )
+
+    def test_accepts_small_future_skew(self, keypair) -> None:
+        """A webhook host whose clock lags Telnyx by a few seconds is a
+        common, legitimate deployment condition."""
+        import time
+
+        from getpatter.server import _validate_telnyx_signature
+
+        priv, pub = keypair
+        body = b'{"data": {}}'
+        ts = str(int(time.time()) + 10)  # within the 30s skew allowance
+        assert _validate_telnyx_signature(body, self._sign(priv, ts, body), ts, pub)

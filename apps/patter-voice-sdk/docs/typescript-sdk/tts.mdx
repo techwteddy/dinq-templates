@@ -1,0 +1,169 @@
+---
+title: "TTS"
+description: "Text-to-speech providers supported by Patter."
+icon: "volume"
+---
+
+# TTS (Text-to-Speech)
+
+TTS is used in **pipeline mode** to synthesize the agent's response audio. If you use an [engine](/typescript-sdk/engines) such as `OpenAIRealtime` or `ElevenLabsConvAI`, speech synthesis is handled internally by the engine.
+
+Every TTS class is imported by name from the package barrel: `import { ElevenLabsTTS } from "getpatter"`.
+
+## Quickstart
+
+```typescript
+// npx tsx example.ts
+import { Patter, Twilio, DeepgramSTT, ElevenLabsTTS } from "getpatter";
+
+const phone = new Patter({ carrier: new Twilio(), phoneNumber: "+15550001234" });
+
+const agent = phone.agent({
+  stt: new DeepgramSTT(),                            // DEEPGRAM_API_KEY from env
+  tts: new ElevenLabsTTS({ voiceId: "rachel" }),     // ELEVENLABS_API_KEY from env
+  systemPrompt: "You are a helpful assistant.",
+});
+
+await phone.serve({ agent });
+```
+
+## Supported providers
+
+| Class | Env var |
+|-------|---------|
+| `ElevenLabsTTS` | `ELEVENLABS_API_KEY` |
+| `ElevenLabsWebSocketTTS` | `ELEVENLABS_API_KEY` |
+| `OpenAITTS` | `OPENAI_API_KEY` |
+| `CartesiaTTS` | `CARTESIA_API_KEY` |
+| `RimeTTS` | `RIME_API_KEY` |
+| `LMNTTTS` | `LMNT_API_KEY` |
+
+### Model / voice / format enums
+
+Each provider exports typed const-objects for valid model IDs, voice presets, and output formats alongside the provider class. They keep `model` / `voice` / `outputFormat` options tab-completable and reject typos at construction time, while still accepting raw strings for forward compatibility:
+
+```typescript
+import {
+  OpenAITTS, OpenAITTSModel, OpenAITTSVoice,
+  ElevenLabsTTS, ElevenLabsModel, ElevenLabsOutputFormat,
+  CartesiaTTS, CartesiaTTSModel,
+  RimeTTS, RimeModel,
+  LMNTTTS, LMNTModel,
+} from "getpatter";
+
+const tts = new OpenAITTS({ voice: OpenAITTSVoice.NOVA, model: OpenAITTSModel.GPT_4O_MINI_TTS });
+```
+
+## ElevenLabs
+
+Streaming HTTP TTS via ElevenLabs. Default model `"eleven_flash_v2_5"` (~75 ms TTFB, drop-in replacement for `eleven_turbo_v2_5`). Other valid `modelId` literals: `"eleven_v3"`, `"eleven_turbo_v2_5"`, `"eleven_multilingual_v2"`, `"eleven_monolingual_v1"`.
+
+```typescript
+import { ElevenLabsTTS } from "getpatter";
+
+const tts = new ElevenLabsTTS();                                  // reads ELEVENLABS_API_KEY
+const tts2 = new ElevenLabsTTS({ voiceId: "rachel" });
+const tts3 = new ElevenLabsTTS({ apiKey: "...", voiceId: "EXAVITQu4vr4xnSDxMaL", modelId: "eleven_v3" });
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `apiKey` | `string` | — | API key — reads from `ELEVENLABS_API_KEY` if omitted. |
+| `voiceId` | `string` | `"21m00Tcm4TlvDq8ikWAM"` (Rachel) | ElevenLabs voice ID (or name). |
+| `modelId` | `ElevenLabsModel \| string` | `"eleven_flash_v2_5"` | Typed literal: `eleven_flash_v2_5` / `eleven_turbo_v2_5` / `eleven_v3` / `eleven_multilingual_v2` / `eleven_monolingual_v1`. |
+| `outputFormat` | `string` | `"pcm_16000"` | ElevenLabs output format. |
+
+### Telephony factories — `forTwilio()` / `forTelnyx()`
+
+When ElevenLabs runs in pipeline mode behind a phone carrier you can negotiate the carrier-native codec at the ElevenLabs HTTP layer and skip per-chunk SDK-side transcoding. The factory variants do that for you:
+
+```typescript
+import { ElevenLabsTTS } from "getpatter";
+
+// Twilio Media Streams: μ-law @ 8 kHz native — no resample, no μ-law encode in JS.
+const tts = ElevenLabsTTS.forTwilio({ voiceId: "rachel" });
+
+// Telnyx default: PCM @ 16 kHz native — no resample.
+const tts2 = ElevenLabsTTS.forTelnyx({ voiceId: "rachel" });
+```
+
+`CartesiaTTS.forTwilio()` / `forTelnyx()` and `ElevenLabsConvAI.forTwilio()` / `forTelnyx()` work the same way. Use them whenever you know the call will go out over Twilio or Telnyx — they shave tens of milliseconds off TTFB and drop CPU on long calls. **Plivo** pins mulaw 8 kHz in its answer XML, so the `forTwilio()` factories apply unchanged.
+
+<Note>
+  **WebSocket variant**: `ElevenLabsWebSocketTTS` is a drop-in alternative that streams audio over a WebSocket connection, saving ~50 ms of HTTP setup + TLS cold-start per utterance. See [ElevenLabs WebSocket TTS](/typescript-sdk/providers/elevenlabs-websocket) for the full reference and limitations.
+</Note>
+
+## OpenAI
+
+```typescript
+import { OpenAITTS } from "getpatter";
+
+const tts = new OpenAITTS();                                      // reads OPENAI_API_KEY
+const tts2 = new OpenAITTS({ voice: "nova" });
+
+// Twilio: skip the intermediate 16 kHz step — resample 24k → 8k directly.
+const tts3 = new OpenAITTS({ targetSampleRate: 8000 });
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `apiKey` | `string` | — | API key — reads from `OPENAI_API_KEY` if omitted. |
+| `voice` | `OpenAITTSVoice \| string` | `"alloy"` | One of `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`. |
+| `model` | `OpenAITTSModel \| string` | `"gpt-4o-mini-tts"` | OpenAI TTS model ID. |
+| `instructions` | `string` | — | Voice direction (only honored by `gpt-4o-mini-tts` and newer). |
+| `speed` | `number` | — | Playback speed multiplier in `[0.25, 4.0]`. |
+| `targetSampleRate` | `8000 \| 16000` | `16000` | Output sample rate. Set to `8000` for Twilio carriers to collapse the 24 k→16 k→8 k chain into a single resample. |
+
+`OpenAITTSVoice` and `OpenAITTSModel` are exported alongside the provider class.
+
+<Note>OpenAI TTS returns audio at 24 kHz — Patter automatically resamples to `targetSampleRate` (16 kHz by default; pass `targetSampleRate: 8000` to deliver μ-law-ready PCM directly to Twilio).</Note>
+
+## Cartesia
+
+Raw PCM streaming via Cartesia's sonic-2 bytes endpoint. See [Cartesia setup](/typescript-sdk/providers/cartesia).
+
+```typescript
+import { CartesiaTTS } from "getpatter";
+
+const tts = new CartesiaTTS();                                    // reads CARTESIA_API_KEY
+const tts = new CartesiaTTS({ voice: "f786b574-daa5-4673-aa0c-cbe3e8534c02" });  // Katie
+```
+
+## Rime
+
+Arcana (high fidelity) and Mist (low latency) via Rime's HTTP endpoint. See [Rime setup](/typescript-sdk/providers/rime).
+
+```typescript
+import { RimeTTS } from "getpatter";
+
+const tts = new RimeTTS();                                        // reads RIME_API_KEY
+const tts = new RimeTTS({ model: "arcana", speaker: "astra" });
+const tts = new RimeTTS({ model: "mistv2", speaker: "cove", speedAlpha: 1.1, reduceLatency: true });
+```
+
+## LMNT
+
+Blizzard and Aurora via the LMNT HTTP API. See [LMNT setup](/typescript-sdk/providers/lmnt).
+
+```typescript
+import { LMNTTTS } from "getpatter";
+
+const tts = new LMNTTTS();                                        // reads LMNT_API_KEY
+const tts = new LMNTTTS({ model: "blizzard", voice: "leah" });
+```
+
+## Missing credentials
+
+Each class throws at construction time if no API key is resolved:
+
+```
+Error: ElevenLabs TTS requires an apiKey. Pass { apiKey: '...' } or
+set ELEVENLABS_API_KEY in the environment.
+```
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="STT" icon="microphone" href="/typescript-sdk/stt">Speech-to-text providers.</Card>
+  <Card title="LLM" icon="brain" href="/typescript-sdk/llm">Language model providers.</Card>
+</CardGroup>

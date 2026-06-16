@@ -1,0 +1,45 @@
+---
+title: "AssemblyAI STT"
+description: "Universal Streaming speech-to-text via AssemblyAI's v3 WebSocket API."
+icon: "waveform"
+---
+
+# AssemblyAI STT
+
+Streaming speech-to-text via AssemblyAI's Universal Streaming v3 API. Uses `ws`, no vendor SDK required.
+
+## Install
+
+```bash
+npm install getpatter
+```
+
+## Usage
+
+The class reads from `ASSEMBLYAI_API_KEY` when `apiKey` is omitted.
+
+```typescript
+import { AssemblyAISTT } from "getpatter";
+
+const stt = new AssemblyAISTT();                                  // reads ASSEMBLYAI_API_KEY
+const stt2 = new AssemblyAISTT({ apiKey: "aa_..." });
+```
+
+Plug it into an agent:
+
+```typescript
+// npx tsx example.ts
+import { Patter, Twilio, AssemblyAISTT, ElevenLabsTTS } from "getpatter";
+
+const phone = new Patter({ carrier: new Twilio(), phoneNumber: "+15550001234" });
+
+const agent = phone.agent({
+  stt: new AssemblyAISTT(),                           // ASSEMBLYAI_API_KEY from env
+  tts: new ElevenLabsTTS({ voiceId: "rachel" }),      // ELEVENLABS_API_KEY from env
+  systemPrompt: "You are a helpful assistant.",
+});
+
+await phone.serve({ agent });
+```
+
+For Twilio (mulaw 8 kHz) use `AssemblyAISTT.forTwilio("aa_...")`.

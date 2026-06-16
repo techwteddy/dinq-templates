@@ -1,0 +1,554 @@
+---
+title: "API Reference"
+description: "Complete reference for all classes, methods, parameters, and types in the Patter Python SDK."
+icon: "terminal"
+---
+
+# API Reference
+
+Complete reference for the `getpatter` Python SDK.
+
+## Patter
+
+The main SDK client class.
+
+### Constructor
+
+```python
+Patter(
+    carrier: Twilio | Telnyx | None = None,
+    phone_number: str = "",
+    webhook_url: str = "",
+    tunnel: CloudflareTunnel | Static | Ngrok | bool | None = None,
+    pricing: dict | None = None,
+    persist: bool | str | None = None,
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `carrier` | `Twilio \| Telnyx \| None` | `None` | Telephony carrier instance. Reads credentials from env vars when arguments are omitted. |
+| `phone_number` | `str` | `""` | Phone number in E.164 format. |
+| `webhook_url` | `str` | `""` | Public hostname, no scheme. |
+| `tunnel` | `CloudflareTunnel \| Static \| Ngrok \| bool \| None` | `None` | Tunnel directive. `True` is shorthand for `CloudflareTunnel()`. |
+| `pricing` | `dict \| None` | `None` | Override default provider pricing. See [Metrics & Cost Tracking](/python-sdk/metrics). |
+| `persist` | `bool \| str \| None` | `None` | Persistent dashboard history. `None` (default) → falls back to `PATTER_LOG_DIR`, then platform default — i.e. persistence is ON by default since 0.6.2. `False` force-off. `True` → platform default path. String → explicit path (`~` expanded). See [Configuration](/python-sdk/configuration#persistent-dashboard-history). |
+
+---
+
+### Methods
+
+#### agent()
+
+```python
+def agent(
+    system_prompt: str,
+    engine: OpenAIRealtime | OpenAIRealtime2 | ElevenLabsConvAI | None = None,
+    stt: STTProvider | None = None,
+    llm: LLMProvider | None = None,
+    tts: TTSProvider | None = None,
+    voice: str = "alloy",
+    model: str = "gpt-realtime-mini",
+    language: str = "en",
+    first_message: str = "",
+    tools: list[Tool] | None = None,
+    variables: dict | None = None,
+    guardrails: list[Guardrail] | None = None,
+    hooks: PipelineHooks | None = None,
+    text_transforms: list[Callable] | None = None,
+    vad: VADProvider | None = None,
+    audio_filter: AudioFilter | None = None,
+    background_audio: BackgroundAudioPlayer | None = None,
+    barge_in_threshold_ms: int = 300,
+    aggressive_first_flush: bool = False,
+    disable_phone_preamble: bool = False,
+    echo_cancellation: bool = False,
+    mcp_servers: list | None = None,
+    prewarm_first_message: bool | None = None,
+) -> Agent
+```
+
+Pass `engine=OpenAIRealtime(...)`, `engine=OpenAIRealtime2(...)`, or `engine=ElevenLabsConvAI(...)` for end-to-end engines; omit `engine=` and pass `stt=`/`tts=` for pipeline mode.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `system_prompt` | `str` | *required* | Agent instructions. |
+| `engine` | `OpenAIRealtime \| OpenAIRealtime2 \| ElevenLabsConvAI \| None` | `None` | End-to-end voice runtime. Omit for pipeline mode. |
+| `stt` | `STTProvider \| None` | `None` | STT instance for pipeline mode (e.g. `DeepgramSTT()`). |
+| `llm` | `LLMProvider \| None` | `None` | LLM provider instance for pipeline mode (e.g. `AnthropicLLM()`). Mutually exclusive with `on_message` on `serve()`. Ignored when `engine` is set. |
+| `tts` | `TTSProvider \| None` | `None` | TTS instance for pipeline mode (e.g. `ElevenLabsTTS()`). |
+| `voice` | `str` | `"alloy"` | TTS voice name (when engine doesn't carry it). |
+| `model` | `str` | `"gpt-realtime-mini"` | AI model ID (when engine doesn't carry it). |
+| `language` | `str` | `"en"` | BCP-47 language code. |
+| `first_message` | `str` | `""` | Greeting spoken at call start. |
+| `tools` | `list[Tool] \| None` | `None` | `Tool(...)` instances for function calling. |
+| `variables` | `dict \| None` | `None` | Dynamic `{placeholder}` variable substitutions. |
+| `guardrails` | `list[Guardrail] \| None` | `None` | `Guardrail(...)` instances applied to LLM output. |
+| `hooks` | `PipelineHooks \| None` | `None` | Pipeline hooks for STT/TTS interception. |
+| `text_transforms` | `list[Callable] \| None` | `None` | Text transformation functions (pipeline mode). |
+| `vad` | `VADProvider \| None` | `None` | Voice activity detection provider (pipeline mode). |
+| `audio_filter` | `AudioFilter \| None` | `None` | Audio preprocessing filter (pipeline mode). |
+| `background_audio` | `BackgroundAudioPlayer \| None` | `None` | Background audio player (pipeline mode). |
+| `barge_in_threshold_ms` | `int` | `300` | Barge-in hang-over window (ms). Set to `0` to disable. |
+| `aggressive_first_flush` | `bool` | `False` | Emit the first clause on a soft punctuation boundary (`,`, em/en-dash) once buffer ≥40 chars. Saves 200–500 ms TTFA. Hard-disabled when `language` starts with `"it"`. Pipeline mode only. |
+| `disable_phone_preamble` | `bool` | `False` | Disable the phone-friendly preamble Patter prepends to `system_prompt` (no markdown / emojis / lists, numbers spelled out, replies kept short). Default `False` keeps the preamble on. |
+| `echo_cancellation` | `bool` | `False` | Pipeline mode only. Instantiates an `NlmsEchoCanceller` per call so the agent's own TTS bleed is removed from the inbound mic before VAD/STT. See [Echo Cancellation](/python-sdk/features#echo-cancellation-nlms-aec). |
+| `mcp_servers` | `list \| None` | `None` | List of MCP server definitions exposed to the agent as tools. See [MCP](/python-sdk/mcp). |
+| `prewarm_first_message` | `bool \| None` | `None` (=`False`) | Opt in to pre-rendering `first_message` TTS during the ringing window so playback starts instantly on pickup. Off by default in 0.6.2 — re-enable per agent when you've validated barge-in interaction. |
+
+**Raises:** `ValueError` if required credentials are missing or conflicting options are passed (e.g. both `engine` and `stt`/`tts`).
+
+---
+
+#### serve()
+
+```python
+async def serve(
+    agent: Agent,
+    port: int = 8000,
+    recording: bool = False,
+    local_recording: bool | str = False,
+    on_call_start: Callable[[dict], Awaitable[None]] | None = None,
+    on_call_end: Callable[[dict], Awaitable[None]] | None = None,
+    on_transcript: Callable[[dict], Awaitable[None]] | None = None,
+    on_message: Callable[[dict], Awaitable[str]] | str | None = None,
+    on_metrics: Callable[[dict], Awaitable[None]] | None = None,
+    voicemail_message: str = "",
+    dashboard: bool = True,
+    dashboard_token: str = "",
+    tunnel: bool = False,
+) -> None
+```
+
+Start the embedded server. Blocks until stopped.
+
+`local_recording` enables carrier-neutral SDK-side recording: an interleaved stereo WAV (left = caller, right = agent, PCM16 16 kHz) written incrementally per call. Pass a directory string to choose the output directory. The final path is surfaced as `recording_path` in the `on_call_end` payload. Independent of the carrier-side `recording` flag. See [Local Recording](/python-sdk/features#local-recording-carrier-neutral).
+
+---
+
+#### call()
+
+```python
+async def call(
+    to: str,
+    agent: Agent | None = None,
+    first_message: str = "",
+    from_number: str = "",
+    machine_detection: bool = True,
+    on_machine_detection: Callable[[MachineDetectionResult], Awaitable[None] | None] | None = None,
+    voicemail_message: str = "",
+    ring_timeout: int | None = 25,
+) -> None
+```
+
+Make an outbound call. Keyword arguments are **snake_case** — e.g. `machine_detection=`, `ring_timeout=`, `on_machine_detection=` (the latter was renamed from `on_machine` in 0.6.2; the callback receives a `MachineDetectionResult` not a raw dict).
+
+`machine_detection` defaults to **`True`** since 0.6.2 — on Twilio Patter uses `MachineDetection=DetectMessageEnd` + Async AMD so there is no answer-latency penalty on human pickups. Pass `machine_detection=False` to skip per-call AMD billing for known destinations.
+
+`ring_timeout` defaults to **25 seconds**, the production-recommended value. Pass `60` for legacy carrier-default parity, or `None` to omit the parameter entirely (carrier picks its own default).
+
+---
+
+#### test()
+
+```python
+async def test(
+    agent: Agent,
+    on_message: Callable[[dict], Awaitable[str]] | None = None,
+    on_call_start: Callable[[dict], Awaitable[None]] | None = None,
+    on_call_end: Callable[[dict], Awaitable[None]] | None = None,
+) -> None
+```
+
+Start an interactive terminal test session. Simulates a phone call without telephony, STT, or TTS — pure text input/output. See [Test Mode](/python-sdk/test-mode).
+
+---
+
+#### disconnect()
+
+```python
+async def disconnect() -> None
+```
+
+Disconnect from Patter. Stops the embedded server.
+
+---
+
+## Carriers
+
+```python
+from getpatter import Twilio, Telnyx                 # flat aliases
+from getpatter.carriers import twilio, telnyx        # namespaced (twilio.Carrier, telnyx.Carrier)
+```
+
+### Twilio
+
+```python
+@dataclass(frozen=True)
+class Twilio:
+    account_sid: str = ""   # reads TWILIO_ACCOUNT_SID when empty
+    auth_token: str = ""    # reads TWILIO_AUTH_TOKEN when empty
+```
+
+### Telnyx
+
+```python
+@dataclass(frozen=True)
+class Telnyx:
+    api_key: str = ""       # reads TELNYX_API_KEY when empty
+    connection_id: str = "" # reads TELNYX_CONNECTION_ID when empty
+    public_key: str = ""    # optional — reads TELNYX_PUBLIC_KEY when empty
+```
+
+---
+
+## Engines
+
+```python
+from getpatter import OpenAIRealtime, OpenAIRealtime2, ElevenLabsConvAI   # flat aliases
+from getpatter.engines import openai, openai_realtime_2, elevenlabs       # namespaced
+```
+
+### OpenAIRealtime
+
+```python
+@dataclass(frozen=True)
+class OpenAIRealtime:
+    api_key: str = ""                                # reads OPENAI_API_KEY when empty
+    voice: str = "alloy"
+    model: str = "gpt-realtime-mini"
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    input_audio_transcription_model: str | None = None
+```
+
+### OpenAIRealtime2
+
+```python
+@dataclass(frozen=True)
+class OpenAIRealtime2:
+    api_key: str = ""                                # reads OPENAI_API_KEY when empty
+    voice: str = "alloy"
+    model: str = "gpt-realtime-2"
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    input_audio_transcription_model: str | None = None
+```
+
+Selects the GA Realtime API. Separate marker from `OpenAIRealtime` because the GA endpoint speaks a different `session.update` wire shape. See [Engines › OpenAIRealtime2](/python-sdk/engines#openairealtime2).
+
+### ElevenLabsConvAI
+
+```python
+@dataclass(frozen=True)
+class ElevenLabsConvAI:
+    api_key: str = ""                                # reads ELEVENLABS_API_KEY when empty
+    agent_id: str = ""                               # reads ELEVENLABS_AGENT_ID when empty
+    voice: str = ""                                  # override agent's default voice
+```
+
+---
+
+## STT classes
+
+```python
+from getpatter import DeepgramSTT, WhisperSTT, CartesiaSTT, AssemblyAISTT, SonioxSTT
+from getpatter.stt import deepgram, whisper, cartesia, assemblyai, soniox, speechmatics
+```
+
+All classes accept `api_key: str | None = None` and fall back to the provider's standard env var. See the [STT page](/python-sdk/stt) for full constructor signatures.
+
+---
+
+## TTS classes
+
+```python
+from getpatter import ElevenLabsTTS, ElevenLabsWebSocketTTS, OpenAITTS, CartesiaTTS, RimeTTS, LMNTTTS
+from getpatter.tts import elevenlabs, elevenlabs_ws, openai, cartesia, rime, lmnt
+```
+
+All classes accept `api_key: str | None = None` and fall back to the provider's standard env var. See the [TTS page](/python-sdk/tts) for full constructor signatures.
+
+---
+
+## LLM providers
+
+```python
+from getpatter import OpenAILLM, AnthropicLLM, GroqLLM, CerebrasLLM, GoogleLLM   # flat
+from getpatter.llm import openai, anthropic, groq, cerebras, google              # namespaced
+```
+
+All classes accept `api_key: str | None = None` and fall back to the provider's standard env var (`GoogleLLM` prefers `GEMINI_API_KEY`, falls back to `GOOGLE_API_KEY`). See the [LLM page](/python-sdk/llm) for full constructor signatures and tool-calling semantics.
+
+Pass an instance via `phone.agent(llm=...)` for pipeline mode. `llm=` is mutually exclusive with `on_message` on `serve()` and is ignored when `engine=` is set.
+
+---
+
+## Tunnels
+
+```python
+from getpatter.tunnels import CloudflareTunnel, Static, Ngrok
+```
+
+| Class | Behavior |
+|-------|----------|
+| `CloudflareTunnel()` | Auto-start a Cloudflare Quick Tunnel via the local `cloudflared` binary. |
+| `Static(hostname=...)` | Use an existing public hostname (user-managed tunnel, e.g. ngrok). |
+| `Ngrok(hostname=...)` | Use an existing ngrok hostname (you run `ngrok http 8000` yourself). Same behavior as `Static(hostname=...)` with an ngrok-friendly name. |
+
+`tunnel=True` on `Patter(...)` is shorthand for `tunnel=CloudflareTunnel()`.
+
+---
+
+## Tools & Guardrails
+
+```python
+from getpatter import Tool, Guardrail, tool, guardrail
+```
+
+### Tool
+
+```python
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    description: str = ""
+    parameters: dict | None = None
+    handler: Callable | None = None
+    webhook_url: str = ""
+```
+
+Either `handler` or `webhook_url` must be provided.
+
+`tool(...)` is a factory that doubles as a decorator — see [Tools](/python-sdk/tools).
+
+### Guardrail
+
+```python
+@dataclass(frozen=True)
+class Guardrail:
+    name: str
+    blocked_terms: list[str] | None = None
+    check: Callable[[str], bool] | None = None
+    replacement: str = "I'm sorry, I can't respond to that."
+```
+
+See [Guardrails](/python-sdk/guardrails).
+
+---
+
+## Data Classes
+
+All data classes are frozen (immutable) dataclasses.
+
+### Agent
+
+```python
+@dataclass(frozen=True)
+class Agent:
+    system_prompt: str
+    voice: str = "alloy"
+    model: str = "gpt-realtime-mini"
+    language: str = "en"
+    first_message: str = ""
+    tools: list[dict] | None = None
+    provider: str = "openai_realtime"
+    stt: STTConfig | STTProvider | None = None
+    tts: TTSConfig | TTSProvider | None = None
+    variables: dict | None = None
+    guardrails: list | None = None
+    hooks: PipelineHooks | None = None
+    text_transforms: list[Callable] | None = None
+    vad: VADProvider | None = None
+    audio_filter: AudioFilter | None = None
+    background_audio: BackgroundAudioPlayer | None = None
+    barge_in_threshold_ms: int = 300
+    aggressive_first_flush: bool = False
+    disable_phone_preamble: bool = False
+    echo_cancellation: bool = False
+    prewarm_first_message: bool = False
+```
+
+`provider` is a closed string literal — `"openai_realtime"`, `"openai_realtime_2"`, `"elevenlabs_convai"`, or `"pipeline"`. It is normally derived from `engine` / `stt`+`tts` and rarely set by hand.
+
+### CallEvent
+
+```python
+@dataclass(frozen=True)
+class CallEvent:
+    call_id: str
+    caller: str = ""
+    callee: str = ""
+    direction: str = ""
+```
+
+### IncomingMessage
+
+```python
+@dataclass(frozen=True)
+class IncomingMessage:
+    text: str
+    call_id: str
+    caller: str
+```
+
+### STTConfig / TTSConfig
+
+Internal config dataclasses produced when you pass an STT/TTS *instance* to `phone.agent()`. You rarely need to construct these directly.
+
+### CallControl
+
+Passed as the second argument to `on_message` handlers. Allows dynamic call management:
+
+```python
+class CallControl:
+    call_id: str
+    caller: str
+    callee: str
+    telephony_provider: str
+
+    async def transfer(number: str) -> None: ...
+    async def hangup() -> None: ...
+```
+
+### CallMetrics / CostBreakdown / LatencyBreakdown / TurnMetrics
+
+See [Metrics & Cost Tracking](/python-sdk/metrics).
+
+---
+
+## Exceptions
+
+```
+PatterError
+├── PatterConnectionError
+│   └── RateLimitError
+├── AuthenticationError
+└── ProvisionError
+```
+
+```python
+from getpatter import (
+    PatterError,
+    PatterConnectionError,
+    AuthenticationError,
+    ProvisionError,
+    RateLimitError,
+    ErrorCode,
+)
+```
+
+Every Patter exception carries a stable, machine-readable `ErrorCode` on its `code` attribute. Branch on the code instead of class-name strings:
+
+```python
+from getpatter import ErrorCode, PatterError
+
+try:
+    await phone.serve(agent)
+except PatterError as exc:
+    if exc.code is ErrorCode.AUTH:
+        ...
+    elif exc.code is ErrorCode.RATE_LIMIT:
+        ...
+```
+
+### ErrorCode values
+
+| Code | Raised when |
+|------|-------------|
+| `CONFIG` | Invalid constructor args, missing required env var, frozen-config violation. |
+| `CONNECTION` | WebSocket connect failure, HTTP 5xx from a provider, network error. |
+| `AUTH` | Provider rejected our credentials (HTTP 401/403, invalid signature). |
+| `TIMEOUT` | Provider response, voicemail post, or other awaited operation timed out. |
+| `RATE_LIMIT` | Provider returned HTTP 429. |
+| `WEBHOOK_VERIFICATION` | Twilio / Telnyx / Plivo webhook signature verification failed. |
+| `INPUT_VALIDATION` | Caller passed a malformed phone number, tool arg, etc. |
+| `PROVIDER_ERROR` | Generic catch-all for unexpected upstream provider failures. |
+| `PROVISION` | Phone number provisioning, webhook configuration, or carrier setup failed. |
+| `INTERNAL` | Assertion failed / unexpected internal state. Likely a Patter bug. |
+
+`ErrorCode` is a `StrEnum` — values compare equal to their string form, so `exc.code == "AUTH"` also works for backward-compatible callers.
+
+---
+
+## Audio helpers
+
+```python
+from getpatter import builtin_clip_path, select_sound_from_list, resample_24k_to_16k
+```
+
+| Helper | Purpose |
+|--------|---------|
+| `builtin_clip_path(name: str) -> Path` | Resolve the on-disk path for a built-in `BuiltinAudioClip` (hold music, dial tones, hangup chimes) so callers can preload or copy them. |
+| `select_sound_from_list(sounds, *, rng=None) -> str` | Pick one entry from a list of sound paths/IDs deterministically (or randomly when `rng` is provided). Useful for randomised hold music. |
+| `resample_24k_to_16k(pcm: bytes) -> bytes` | One-shot 24 kHz → 16 kHz PCM resampler. Mirrors the helper Patter uses internally for OpenAI TTS chunks; exported for callers who need to do the same conversion outside the streaming loop. |
+
+---
+
+## Top-level exports
+
+```python
+from getpatter import (
+    # Client
+    Patter,
+
+    # Carriers
+    Twilio, Telnyx,
+    TwilioAdapter, TelnyxAdapter,                  # advanced: direct adapter access
+
+    # Engines
+    OpenAIRealtime, OpenAIRealtime2, ElevenLabsConvAI,
+
+    # STT classes
+    DeepgramSTT, WhisperSTT, OpenAITranscribeSTT,
+    CartesiaSTT, AssemblyAISTT, SonioxSTT, SpeechmaticsSTT,
+
+    # TTS classes
+    ElevenLabsTTS, ElevenLabsWebSocketTTS, OpenAITTS, CartesiaTTS, RimeTTS, LMNTTTS,
+
+    # LLM classes
+    OpenAILLM, AnthropicLLM, GroqLLM, CerebrasLLM, GoogleLLM,
+
+    # VAD (opt-in: pip install 'getpatter[silero]')
+    SileroVAD,
+
+    # Integrations
+    PatterTool,                                    # phone-as-a-tool for external agents
+
+    # Public primitives
+    Tool, Guardrail, tool, guardrail,
+
+    # Data classes
+    Agent, CallControl, CallEvent, CallMetrics, CostBreakdown,
+    LatencyBreakdown, IncomingMessage, TurnMetrics, PipelineHooks,
+    HookContext, STTConfig, TTSConfig,
+
+    # Observability
+    init_tracing, is_tracing_enabled, start_span,
+    SPAN_CALL, SPAN_STT, SPAN_LLM, SPAN_TTS, SPAN_TOOL,
+    SPAN_ENDPOINT, SPAN_BARGEIN,
+    EventBus, PatterEventType,
+
+    # Services / utilities
+    SentenceChunker, PipelineHookExecutor,
+    filter_markdown, filter_emoji, filter_for_tts,
+    FallbackLLMProvider, AllProvidersFailedError, PartialStreamError,
+    ChatContext, ChatMessage,
+    IVRActivity, TfidfLoopDetector, DtmfEvent, format_dtmf,
+    ScheduleHandle, schedule_cron, schedule_once, schedule_interval,
+    BackgroundAudioPlayer, BuiltinAudioClip, mix_pcm,
+    builtin_clip_path, select_sound_from_list, resample_24k_to_16k,
+
+    # LLM primitives (see python-sdk/llm)
+    LLMChunk, DefaultToolExecutor,
+
+    # Errors
+    PatterError, PatterConnectionError, AuthenticationError,
+    ProvisionError, RateLimitError, ErrorCode,
+)
+
+from getpatter.carriers import twilio, telnyx
+from getpatter.engines import openai, openai_realtime_2, elevenlabs
+from getpatter.stt import deepgram, whisper, openai_transcribe, cartesia, assemblyai, soniox, speechmatics
+from getpatter.tts import elevenlabs, openai, cartesia, rime, lmnt
+from getpatter.llm import openai, anthropic, groq, cerebras, google
+from getpatter.tunnels import CloudflareTunnel, Static, Ngrok
+```

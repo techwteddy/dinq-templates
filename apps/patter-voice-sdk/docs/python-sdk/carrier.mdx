@@ -1,0 +1,197 @@
+---
+title: "Carrier"
+description: "Telephony providers: Twilio, Telnyx, and Plivo."
+icon: "phone"
+---
+
+# Carrier
+
+The carrier delivers the phone call to Patter. Patter supports **Twilio**, **Telnyx**, and **Plivo**. All three share inbound DTMF, call transfer, AMD, status callbacks, recording, voicemail drop, and cost tracking. **Plivo** additionally supports native DTMF *send* over the media WebSocket — a capability Twilio Media Streams lacks.
+
+You configure one carrier per `Patter` instance by passing an instance to the `carrier=` keyword argument. Each carrier class falls back to environment variables when constructor arguments are omitted.
+
+Each carrier ships as both a **flat alias** (`from getpatter import Twilio, Telnyx, Plivo`) and a **namespaced** class (`from getpatter.carriers import twilio` → `twilio.Carrier()`). They are equivalent.
+
+## Twilio
+
+```python
+from getpatter import Patter, Twilio
+
+phone = Patter(carrier=Twilio(), phone_number="+15550001234")   # reads env
+# Or explicitly:
+phone = Patter(
+    carrier=Twilio(account_sid="AC...", auth_token="..."),
+    phone_number="+15550001234",
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `account_sid` | `str` | `""` | Twilio Account SID (starts with `AC`). Reads from `TWILIO_ACCOUNT_SID` when empty. |
+| `auth_token` | `str` | `""` | Twilio Auth Token. Reads from `TWILIO_AUTH_TOKEN` when empty. |
+
+Namespaced form:
+
+```python
+from getpatter.carriers import twilio
+
+carrier = twilio.Carrier()                            # reads env
+carrier = twilio.Carrier(account_sid="AC...", auth_token="...")
+```
+
+On `serve()`, Patter automatically sets the `voice_url` on the Twilio number to `https://<webhook_url>/webhooks/twilio/voice` via the Twilio REST API — no manual Console configuration needed.
+
+### Twilio trial account limitations
+
+Twilio trial accounts apply a few platform-level restrictions that affect first-time testing. None of these are Patter limitations — they're Twilio platform rules:
+
+1. **Verified Caller IDs required for outbound** — trial accounts can only call numbers you've added under **Phone Numbers › Verified Caller IDs** in the Twilio Console. Verifying via the CLI is also restricted; do it from the Console.
+2. **Trial announcement prepended on outbound calls** — Twilio plays an English trial-account message before connecting the call to your agent; the callee has to press a key to continue.
+3. **Trial caller-ID restrictions** — the caller-ID shown to the recipient may be masked or labelled differently than your purchased number until the account is upgraded.
+
+Upgrading the account in the Twilio Console clears all three. Refer to the Twilio docs (search: "trial account") for the current exact behaviour — Twilio may change these over time.
+
+### Signature verification
+
+The Auth Token is also used to verify every Twilio webhook with HMAC-SHA1 against the `X-Twilio-Signature` header. Requests with invalid signatures are rejected with HTTP 403.
+
+## Telnyx
+
+```python
+from getpatter import Patter, Telnyx
+
+phone = Patter(carrier=Telnyx(), phone_number="+15550001234")    # reads env
+# Or explicitly:
+phone = Patter(
+    carrier=Telnyx(
+        api_key="KEY...",
+        connection_id="2000000000000000000",
+        public_key="...",  # optional — enables Ed25519 signature verification
+    ),
+    phone_number="+15550001234",
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | `str` | `""` | Telnyx API v2 key. Reads from `TELNYX_API_KEY` when empty. |
+| `connection_id` | `str` | `""` | Call Control Application ID. Reads from `TELNYX_CONNECTION_ID` when empty. |
+| `public_key` | `str` | `""` | Optional. Ed25519 public key for webhook signature verification. Reads from `TELNYX_PUBLIC_KEY` when empty. |
+
+Namespaced form:
+
+```python
+from getpatter.carriers import telnyx
+
+carrier = telnyx.Carrier()                            # reads env
+```
+
+### Signature verification
+
+When `public_key` is set (or `TELNYX_PUBLIC_KEY` is present), every Telnyx webhook is verified with Ed25519. Requests older than 5 minutes are rejected (replay protection).
+
+## Plivo
+
+```python
+from getpatter import Patter, Plivo
+
+phone = Patter(carrier=Plivo(), phone_number="+15550001234")    # reads env
+# Or explicitly:
+phone = Patter(
+    carrier=Plivo(auth_id="MA...", auth_token="..."),
+    phone_number="+15550001234",
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `auth_id` | `str` | `""` | Plivo Auth ID (starts with `MA` or `SA`). Reads from `PLIVO_AUTH_ID` when empty. |
+| `auth_token` | `str` | `""` | Plivo Auth Token. Used for HTTP Basic auth on the Plivo REST API *and* as the V3 webhook signature key. Reads from `PLIVO_AUTH_TOKEN` when empty. |
+
+Namespaced form:
+
+```python
+from getpatter.carriers import plivo
+
+carrier = plivo.Carrier()                              # reads env
+carrier = plivo.Carrier(auth_id="MA...", auth_token="...")
+```
+
+On `serve()`, Patter best-effort creates a Plivo Application bound to `https://<webhook_url>/webhooks/plivo/voice` and links it to your phone number via the Plivo REST API. Most production deployments pre-configure the Plivo Application in the console — pass `manage_webhook=False` on `serve()` to opt out.
+
+### Wire format and parity gains
+
+- **Audio**: mulaw 8 kHz, pinned via the `<Stream contentType="audio/x-mulaw;rate=8000">` answer XML. Plivo's `<Stream>` element places the WSS URL as its text content (not a `url=` attribute, as Twilio does).
+- **Native DTMF send** over the media WebSocket via `sendDTMF` — a parity gain over Twilio Media Streams.
+- **Voicemail drop** uses Plivo's live-call Speak API + `DELETE /Call/{uuid}/` hangup.
+- **AMD** is async: Patter sets `machine_detection="true"` + `machine_detection_url=/webhooks/plivo/amd` so human pickups don't incur the detection-window latency.
+- **Status callback**: Patter wires `hangup_url=/webhooks/plivo/status` on outbound calls so no-answer / busy / failed transitions reach the dashboard before any media webhook fires.
+
+### Signature verification
+
+The Auth Token doubles as the V3 webhook signature key. The V3 scheme is:
+
+- **POST**: `signed = url + sorted_post_params + "." + nonce` — POST params sorted alphabetically by key (case-sensitive) and concatenated as `key1value1key2value2…` with no delimiters.
+- **GET**:  `signed = url + "." + nonce` — query parameters live in the URL already.
+
+Both are HMAC-SHA256 keyed on the Auth Token and base64-encoded, delivered as the `X-Plivo-Signature-V3` header alongside `X-Plivo-Signature-V3-Nonce`. The signature header may carry comma-separated values during key rotation; any matching value accepts. Requests with invalid signatures are rejected with HTTP 403.
+
+## Webhook Endpoints
+
+The embedded server exposes these endpoints regardless of carrier choice:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /webhooks/twilio/voice` | Incoming Twilio call → returns TwiML to start streaming. |
+| `POST /webhooks/twilio/status` | Call lifecycle status callbacks (initiated, ringing, answered, completed). |
+| `POST /webhooks/twilio/recording` | Recording completion callbacks. |
+| `POST /webhooks/twilio/amd` | Async AMD (answering machine detection) results. |
+| `POST /webhooks/telnyx/voice` | Incoming Telnyx call → returns Call Control commands. |
+| `POST /webhooks/plivo/voice` | Incoming Plivo call → returns Plivo XML to start streaming. Also serves outbound `answer_url`. |
+| `POST /webhooks/plivo/status` | Plivo `hangup_url` callback — call lifecycle (completed, busy, no-answer, failed, timeout, cancel). |
+| `POST /webhooks/plivo/amd` | Async AMD result (`machine_detection_url`). |
+| `GET|POST /webhooks/plivo/transfer` | `<Dial>` XML for blind transfer (Plivo `aleg_url`). |
+
+## Outbound calls
+
+Use `phone.call(...)` to place an outbound call on either carrier. Every keyword argument is **snake_case**:
+
+```python
+import asyncio
+from getpatter import Patter, Twilio, OpenAIRealtime
+
+phone = Patter(carrier=Twilio(), phone_number="+15550001234")
+agent = phone.agent(engine=OpenAIRealtime(), system_prompt="You are a friendly receptionist.")
+
+async def main():
+    server = asyncio.create_task(phone.serve(agent, tunnel=True))
+    await phone.ready                                   # wait until tunnel + listener are up
+
+    await phone.call(
+        to="+15550009876",
+        agent=agent,
+        first_message="Hi! This is a courtesy call from Acme.",
+        machine_detection=True,                          # default since 0.6.2
+        ring_timeout=25,                                 # default since 0.6.2
+        voicemail_message="Please call us back at +15550001234.",
+    )
+
+asyncio.run(main())
+```
+
+Key defaults changed in 0.6.2:
+
+- `machine_detection` defaults to `True`. On Twilio Patter sends `MachineDetection=DetectMessageEnd` + Async AMD so there is no answer-latency penalty on human pickups. Pass `False` to skip per-call AMD billing.
+- `ring_timeout` defaults to `25` seconds. Pass `60` for legacy carrier-default parity, or `None` to omit the parameter entirely.
+- The AMD callback was renamed `on_machine` → `on_machine_detection` and now receives a `MachineDetectionResult` (not a raw dict).
+
+See [Local Mode › call() Parameters](/python-sdk/local-mode#call-parameters-local-mode) for the full parameter table.
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="STT" icon="microphone" href="/python-sdk/stt">Speech-to-text providers.</Card>
+  <Card title="LLM" icon="brain" href="/python-sdk/llm">Language model providers.</Card>
+  <Card title="TTS" icon="volume" href="/python-sdk/tts">Text-to-speech providers.</Card>
+  <Card title="Tunneling" icon="cloud" href="/dev-tools/tunneling">Expose your local server publicly.</Card>
+</CardGroup>

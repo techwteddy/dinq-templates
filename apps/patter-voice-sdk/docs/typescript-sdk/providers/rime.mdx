@@ -1,0 +1,67 @@
+---
+title: "Rime TTS"
+description: "Arcana and Mist model families via Rime's HTTP endpoint."
+icon: "waveform"
+---
+
+# Rime TTS
+
+`RimeTTS` targets the [Rime HTTP endpoint](https://rime.ai/docs). Both Arcana (high fidelity) and Mist (low latency) model families are supported. The provider requests `audio/pcm` and yields raw PCM_S16LE chunks at the configured sample rate.
+
+## Install
+
+```bash
+npm install getpatter
+```
+
+No vendor SDK is required — `RimeTTS` uses the platform `fetch`, so it works on Node 18+.
+
+## Usage
+
+```typescript
+import { RimeTTS } from "getpatter";
+
+const tts = new RimeTTS();                                            // reads RIME_API_KEY
+const tts2 = new RimeTTS({ model: "arcana", speaker: "astra" });
+```
+
+In an agent:
+
+```typescript
+// npx tsx example.ts
+import { Patter, Twilio, DeepgramSTT, RimeTTS } from "getpatter";
+
+const phone = new Patter({ carrier: new Twilio(), phoneNumber: "+15550001234" });
+
+const agent = phone.agent({
+  stt: new DeepgramSTT(),                             // DEEPGRAM_API_KEY from env
+  tts: new RimeTTS({ model: "arcana", speaker: "astra" }),  // RIME_API_KEY from env
+  systemPrompt: "You are a helpful assistant.",
+});
+
+await phone.serve({ agent });
+```
+
+Mist v2 — low-latency, streaming-friendly:
+
+```typescript
+const fast = new RimeTTS({
+  model: "mistv2",
+  speaker: "cove",
+  speedAlpha: 1.1,
+  reduceLatency: true,
+});
+```
+
+## Options (selection)
+
+| Option | Default | Notes |
+|---|---|---|
+| `apiKey` | — | Reads from `RIME_API_KEY` when omitted. |
+| `model` | `"arcana"` | `"arcana"` or any `mist*` model. |
+| `speaker` | `"astra"` / `"cove"` | Default depends on model. |
+| `lang` | `"eng"` | Rime language code. |
+| `sampleRate` | `16000` | Hz. |
+| `temperature`, `topP`, `maxTokens`, `repetitionPenalty` | — | Arcana only. |
+| `speedAlpha`, `reduceLatency`, `pauseBetweenBrackets`, `phonemizeBetweenBrackets` | — | Mist only. |
+| `baseUrl` | Rime `/v1/rime-tts` | Override for proxying or self-hosted gateways. |

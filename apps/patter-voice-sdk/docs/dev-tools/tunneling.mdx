@@ -1,0 +1,181 @@
+---
+title: "Tunneling"
+description: "Expose your local Patter server to the internet for Twilio webhooks."
+icon: "cloud"
+---
+
+# Tunneling
+
+Patter needs a public URL so your telephony provider can send webhooks to the local server. There are three options, all configured via the `tunnel=` argument on `Patter()` (or `new Patter({ tunnel })`).
+
+## CloudflareTunnel (dev / acceptance only)
+
+The built-in Cloudflare Quick Tunnel creates a public `*.trycloudflare.com` URL with zero setup. No account required — just the `cloudflared` binary on `PATH` (or the `cloudflared` npm package).
+
+**Warning (Twilio outbound calls):** Cloudflare Quick Tunnel routes traffic through a different edge pool than Twilio's Media Streams WebSocket upgrade path. On **first outbound call**, the WSS upgrade can race and drop ~1 % of calls. For production Twilio outbound use, replace this with [ngrok](#static-user-managed-tunnel) or a pre-provisioned named Cloudflare tunnel instead.
+
+<CodeGroup>
+```python Python
+from getpatter import Patter, Twilio
+from getpatter.tunnels import CloudflareTunnel
+
+phone = Patter(
+    carrier=Twilio(),
+    phone_number="+15550001234",
+    tunnel=CloudflareTunnel(),                 # auto-starts cloudflared
+)
+# When phone.serve() runs: "Tunnel ready: https://random-name.trycloudflare.com"
+```
+
+```typescript TypeScript
+import { Patter, Twilio, CloudflareTunnel } from "getpatter";
+
+const phone = new Patter({
+  carrier: new Twilio(),
+  phoneNumber: "+15550001234",
+  tunnel: new CloudflareTunnel(),              // auto-starts cloudflared
+});
+// When phone.serve() runs: "Tunnel ready: https://random-name.trycloudflare.com"
+```
+</CodeGroup>
+
+`tunnel=True` (Python) / `tunnel: true` (TypeScript) is shorthand for `CloudflareTunnel()`:
+
+<CodeGroup>
+```python Python
+phone = Patter(carrier=Twilio(), phone_number="+15550001234", tunnel=True)
+# equivalent to tunnel=CloudflareTunnel()
+```
+
+```typescript TypeScript
+const phone = new Patter({ carrier: new Twilio(), phoneNumber: "+15550001234", tunnel: true });
+// equivalent to tunnel: new CloudflareTunnel()
+```
+</CodeGroup>
+
+You can also pass `tunnel=True` directly to `serve()`:
+
+<CodeGroup>
+```python Python
+await phone.serve(agent, tunnel=True)
+```
+
+```typescript TypeScript
+await phone.serve({ agent, tunnel: true });
+```
+</CodeGroup>
+
+### Installing cloudflared
+
+The TypeScript SDK ships the `cloudflared` npm wrapper as a regular dependency, so `tunnel: true` Just Works out of the box (`npm install getpatter` is enough).
+
+The Python SDK requires the `cloudflared` binary on your `PATH` — there is no Python wrapper package available. Install it once with your system package manager:
+
+<CodeGroup>
+```bash macOS
+brew install cloudflared
+```
+
+```bash Linux
+# Debian/Ubuntu — official Cloudflare deb
+curl -L --output cloudflared.deb \
+  https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i cloudflared.deb
+
+# or, if available in your repos
+sudo apt install cloudflared
+```
+
+```bash Windows
+winget install --id Cloudflare.cloudflared
+```
+</CodeGroup>
+
+If you pass `tunnel=True` (Python) without the `cloudflared` binary on `PATH`, the SDK raises a clear error with the install command you need. The legacy `pip install "getpatter[tunnel]"` extra is now an empty alias kept only for backwards compatibility.
+
+### Twilio webhook auto-configuration
+
+Both SDKs automatically set the tunnel URL as the Twilio number's voice webhook (`IncomingPhoneNumber.update(voice_url=...)`) on `serve()`, so inbound calls work out of the box — no Twilio Console configuration needed. For Telnyx, the number is associated with the configured Call Control Application (`connection_id`) the same way.
+
+If auto-configuration fails (for example the Twilio auth token doesn't have permission to update the number), Patter logs a warning and prints the URL you can set manually.
+
+## Static (user-managed tunnel)
+
+For production, especially with Twilio outbound calls, manage your own tunnel using ngrok or a pre-provisioned Cloudflare Named Tunnel. Patter will skip process management and trust the hostname you provide.
+
+**Recommended for Twilio outbound:** ngrok stabilizes the WSS upgrade path and eliminates the Quick Tunnel race. Sign up free at [ngrok.com](https://ngrok.com), then:
+
+```bash
+ngrok http 8000
+```
+
+<CodeGroup>
+```python Python
+from getpatter import Patter, Twilio
+from getpatter.tunnels import Static
+
+phone = Patter(
+    carrier=Twilio(),
+    phone_number="+15550001234",
+    tunnel=Static(hostname="abc123.ngrok.io"),
+)
+```
+
+```typescript TypeScript
+import { Patter, Twilio, StaticTunnel } from "getpatter";
+
+const phone = new Patter({
+  carrier: new Twilio(),
+  phoneNumber: "+15550001234",
+  tunnel: new StaticTunnel({ hostname: "abc123.ngrok.io" }),
+});
+```
+</CodeGroup>
+
+Alternatively, pass the hostname directly as `webhook_url` / `webhookUrl`:
+
+<CodeGroup>
+```python Python
+phone = Patter(
+    carrier=Twilio(),
+    phone_number="+15550001234",
+    webhook_url="abc123.ngrok.io",             # no https:// prefix
+)
+```
+
+```typescript TypeScript
+const phone = new Patter({
+  carrier: new Twilio(),
+  phoneNumber: "+15550001234",
+  webhookUrl: "abc123.ngrok.io",
+});
+```
+</CodeGroup>
+
+## Production
+
+In production, point your own domain at the server:
+
+<CodeGroup>
+```python Python
+phone = Patter(
+    carrier=Twilio(),
+    phone_number="+15550001234",
+    webhook_url="api.yourcompany.com",
+)
+```
+
+```typescript TypeScript
+const phone = new Patter({
+  carrier: new Twilio(),
+  phoneNumber: "+15550001234",
+  webhookUrl: "api.yourcompany.com",
+});
+```
+</CodeGroup>
+
+No tunnel needed — the telephony provider connects directly to your server.
+
+---
+
+For a production-ready tunnel setup with INGRESS rules that expose only the carrier webhook path and dashboard hardening, see [Production Deployment](/dev-tools/production-deployment).

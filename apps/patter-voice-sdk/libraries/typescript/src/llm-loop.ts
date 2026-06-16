@@ -1,0 +1,1274 @@
+/**
+ * Built-in LLM loop for pipeline mode when no onMessage handler is provided.
+ *
+ * Uses a pluggable ``LLMProvider`` interface so callers can supply OpenAI,
+ * Anthropic, Gemini, or any custom provider.  The default provider is
+ * ``OpenAILLMProvider`` which preserves full backward compatibility.
+ */
+
+import type { ToolDefinition, HookContext } from './types';
+import type { PipelineHookExecutor } from './pipeline-hooks';
+import type { EventBus } from './observability/event-bus';
+import { getLogger } from './logger';
+import { validateWebhookUrl } from './server';
+import { SPAN_TOOL, withSpan } from './observability/tracing';
+import { PatterConnectionError } from './errors';
+import {
+  CircuitBreakerRegistry,
+  type CircuitBreakerOptions,
+} from './tools/circuit-breaker';
+
+// ---------------------------------------------------------------------------
+// Tool execution — pluggable policy
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal interface for recording LLM usage chunks.
+ * Avoids a circular import from metrics.ts.
+ */
+export interface LlmUsageRecorder {
+  recordLlmUsage(
+    provider: string,
+    model: string,
+    inputTokens: number,
+    outputTokens: number,
+    cacheReadTokens?: number,
+    cacheWriteTokens?: number,
+  ): void;
+}
+
+const DEFAULT_TOOL_MAX_RETRIES = 2;
+const DEFAULT_TOOL_RETRY_DELAY_MS = 500;
+const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
+/** Ceiling for a per-tool timeout. Mirrors Python ``_MAX_TOOL_TIMEOUT_S = 300``. */
+const MAX_TOOL_TIMEOUT_MS = 300_000;
+const TOOL_MAX_RESPONSE_BYTES = 1 * 1024 * 1024;
+
+/**
+ * Sentinel for a per-tool handler timeout. Terminal — never retried.
+ *
+ * A dedicated class (rather than substring-matching the message) makes the
+ * terminal-vs-retryable decision robust: a user handler that happens to throw
+ * an error whose message contains "timed out" is NOT misclassified as the
+ * executor's own timeout. Mirrors Python `asyncio.TimeoutError` handling in
+ * `tool_executor.py`.
+ */
+class ToolTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ToolTimeoutError';
+  }
+}
+
+/**
+ * Resolve the effective per-tool timeout in milliseconds.
+ *
+ * - When the tool declares a ``timeoutMs`` (new feature), clamp it to
+ *   ``[100, 300_000]`` and use it for BOTH the handler await race and the
+ *   webhook ``AbortSignal.timeout`` — so a long browser-automation /
+ *   external-API tool isn't cut at the executor's 10 s default.
+ * - When ``timeoutMs`` is ``undefined``, fall back to ``defaultMs``
+ *   (the constructor-level ``requestTimeoutMs``).
+ *
+ * Mirrors Python ``_clamp_tool_timeout`` in ``tool_executor.py``.
+ */
+function resolveToolTimeoutMs(
+  toolTimeoutMs: number | undefined,
+  defaultMs: number,
+): number {
+  if (toolTimeoutMs === undefined) return defaultMs;
+  return Math.max(100, Math.min(toolTimeoutMs, MAX_TOOL_TIMEOUT_MS));
+}
+
+/**
+ * Pluggable tool executor — mirrors the Python ``ToolExecutor`` in
+ * ``libraries/python/getpatter/services/tool_executor.py``.
+ *
+ * Implementors receive a fully-resolved ``ToolDefinition`` (handler +/ webhook
+ * URL already validated by the SDK) and MUST return a JSON-stringifiable
+ * result. Errors should be returned as JSON like
+ * ``{ error: "...", fallback: true }`` rather than thrown.
+ */
+export interface ToolExecutor {
+  execute(
+    toolDef: ToolDefinition,
+    args: Record<string, unknown>,
+    callContext: Record<string, unknown>,
+    onProgress?: (text: string) => void | Promise<void>,
+  ): Promise<string>;
+}
+
+/** Constructor options for `DefaultToolExecutor`. */
+export interface DefaultToolExecutorOptions {
+  /** Total attempts = maxRetries + 1. Default: 2 (i.e. 3 attempts). */
+  maxRetries?: number;
+  /** Delay between attempts, in ms. Each retry waits this × ``2^attempt``. */
+  retryDelayMs?: number;
+  /** Per-request timeout for webhook calls, in ms. */
+  requestTimeoutMs?: number;
+  /**
+   * Circuit-breaker tunables. Default trips OPEN after 5 consecutive
+   * failures and stays OPEN for 30 s. Pass ``{ failureThreshold: 0 }`` to
+   * disable entirely (legacy behaviour).
+   */
+  circuitBreaker?: CircuitBreakerOptions;
+}
+
+/**
+ * Invoke a tool handler that may be either an ``async`` function (returns
+ * a JSON string) or an ``async function*`` generator (yields progress
+ * updates, returns / final-yields the result).
+ *
+ * Generator yields are inspected for shape:
+ *  - ``{ progress: string }`` → forwarded to ``onProgress`` (the stream
+ *    handler speaks it inline via ``adapter.sendText``).
+ *  - ``{ result: string }`` → captured as the final result; subsequent
+ *    yields are ignored. The generator's ``return`` value (if any)
+ *    overrides this.
+ *  - any other shape → JSON-stringified and treated as ``progress``
+ *    (best-effort fallback — exotic shapes still surface to the caller).
+ */
+async function invokeHandler(
+  handler: NonNullable<ToolDefinition['handler']>,
+  args: Record<string, unknown>,
+  callContext: Record<string, unknown>,
+  onProgress?: (text: string) => void | Promise<void>,
+): Promise<string> {
+  // Call once and inspect what we got back. ``async function`` returns a
+  // Promise<string>; ``async function*`` returns an AsyncGenerator. The
+  // generator has both ``Symbol.asyncIterator`` AND a ``next`` method,
+  // which a Promise does not.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const invoked: any = (handler as any)(args, callContext);
+  if (invoked && typeof invoked === 'object' && typeof invoked[Symbol.asyncIterator] === 'function' && typeof invoked.next === 'function') {
+    let lastResult = '';
+    while (true) {
+      const step = await invoked.next();
+      if (step.done) {
+        const ret = typeof step.value === 'string' ? step.value : '';
+        return ret || lastResult || '{}';
+      }
+      const yielded = step.value;
+      if (yielded && typeof yielded === 'object') {
+        if (typeof yielded.progress === 'string') {
+          if (onProgress) await onProgress(yielded.progress);
+          continue;
+        }
+        if (typeof yielded.result === 'string') {
+          lastResult = yielded.result;
+          continue;
+        }
+      }
+      // Unknown shape → treat as best-effort progress so the caller at
+      // least sees something rather than a silent drop.
+      if (onProgress && yielded != null) {
+        const text = typeof yielded === 'string' ? yielded : JSON.stringify(yielded);
+        await onProgress(text);
+      }
+    }
+  }
+  // Plain async function — await the Promise.
+  return await (invoked as Promise<string>);
+}
+
+function backoffDelayMs(baseMs: number, attempt: number): number {
+  // Exponential: base × 2^attempt. Capped at 5 s so a slow vendor doesn't
+  // hold a real-time voice turn open for tens of seconds. Adds tiny
+  // jitter (0–60 ms) to avoid thundering herd on synchronized retries.
+  const cap = 5_000;
+  const exp = Math.min(cap, baseMs * Math.pow(2, attempt));
+  return Math.round(exp + Math.random() * 60);
+}
+
+/**
+ * Default executor — webhook + handler with retry/exponential-backoff
+ * and a per-tool circuit breaker.
+ *
+ * Failure modes return a structured ``{ error, fallback: true }`` JSON
+ * so the model can recover gracefully (e.g. respond "I couldn't reach
+ * the booking system, can I take your number to call you back?")
+ * instead of hanging on an exception that never surfaces.
+ */
+export class DefaultToolExecutor implements ToolExecutor {
+  private readonly maxRetries: number;
+  private readonly retryDelayMs: number;
+  private readonly requestTimeoutMs: number;
+  private readonly breaker: CircuitBreakerRegistry;
+
+  constructor(opts: DefaultToolExecutorOptions = {}) {
+    this.maxRetries = opts.maxRetries ?? DEFAULT_TOOL_MAX_RETRIES;
+    this.retryDelayMs = opts.retryDelayMs ?? DEFAULT_TOOL_RETRY_DELAY_MS;
+    this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+    this.breaker = new CircuitBreakerRegistry(opts.circuitBreaker ?? {});
+  }
+
+  /** Expose the breaker for tests + dashboard observability. */
+  get circuitBreaker(): CircuitBreakerRegistry {
+    return this.breaker;
+  }
+
+  async execute(
+    toolDef: ToolDefinition,
+    args: Record<string, unknown>,
+    callContext: Record<string, unknown>,
+    /**
+     * Optional progress sink — invoked with each ``{ progress: string }``
+     * value yielded by an async-generator handler. Wired by the stream
+     * handler to ``OpenAIRealtimeAdapter.sendText`` so the agent speaks
+     * the progress message inline. ``null``/``undefined`` discards
+     * progress (function handlers always discard since they have no
+     * progress channel).
+     */
+    onProgress?: (text: string) => void | Promise<void>,
+  ): Promise<string> {
+    // Reject early when the breaker is OPEN. Returns a structured
+    // fallback JSON so the model can recover instead of waiting.
+    if (!this.breaker.allow(toolDef.name)) {
+      const cooldown = this.breaker.timeUntilHalfOpen(toolDef.name);
+      return JSON.stringify({
+        error: `Tool '${toolDef.name}' is temporarily unavailable (circuit open).`,
+        fallback: true,
+        circuit_state: 'open',
+        retry_after_ms: cooldown,
+      });
+    }
+
+    // Resolve per-tool timeout: tool.timeoutMs wins over constructor default.
+    const effectiveTimeoutMs = resolveToolTimeoutMs(
+      (toolDef as { timeoutMs?: number }).timeoutMs,
+      this.requestTimeoutMs,
+    );
+
+    // Local handler — now retried with exponential backoff (parity with
+    // the webhook path). Previously a single failure became a hard fault;
+    // a transient DB blip would silently kill the turn.
+    if (toolDef.handler) {
+      const totalAttempts = this.maxRetries + 1;
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < totalAttempts; attempt++) {
+        // Timer handle for the timeout race — cleared in `finally` so the
+        // losing setTimeout never lingers (a ref'd timer would keep the Node
+        // event loop alive up to the 5-min ceiling on every fast call).
+        // Mirrors Python asyncio.wait_for() which cancels its timer on settle.
+        let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          // Wrap handler invocation in a timeout race so a hung handler
+          // doesn't stall the turn forever. A timeout is terminal — do NOT
+          // retry (multiplying wait by totalAttempts stalls the turn).
+          // Mirrors Python asyncio.wait_for() in _execute_handler().
+          const handlerPromise = invokeHandler(toolDef.handler, args, callContext, onProgress);
+          const result = await Promise.race([
+            handlerPromise,
+            new Promise<never>((_, reject) => {
+              timeoutTimer = setTimeout(
+                () =>
+                  reject(
+                    new ToolTimeoutError(
+                      `Tool handler '${toolDef.name}' timed out after ${effectiveTimeoutMs}ms`,
+                    ),
+                  ),
+                effectiveTimeoutMs,
+              );
+            }),
+          ]);
+          this.breaker.recordSuccess(toolDef.name);
+          return result;
+        } catch (e) {
+          if (e instanceof ToolTimeoutError) {
+            // Timeout is terminal — do NOT retry.
+            getLogger().error(String(e));
+            this.breaker.recordFailure(toolDef.name);
+            return JSON.stringify({
+              error: String(e),
+              fallback: true,
+            });
+          }
+          lastErr = e;
+          if (attempt < totalAttempts - 1) {
+            getLogger().warn(
+              `Tool handler '${toolDef.name}' failed (attempt ${attempt + 1}/${totalAttempts}), retrying: ${String(e)}`,
+            );
+            await new Promise<void>((r) => setTimeout(r, backoffDelayMs(this.retryDelayMs, attempt)));
+          }
+        } finally {
+          // Clear the losing race timer so a resolved handler leaves no
+          // dangling timeout (parity with Python wait_for cleanup).
+          if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+        }
+      }
+      this.breaker.recordFailure(toolDef.name);
+      return JSON.stringify({
+        error: `Tool handler error after ${totalAttempts} attempts: ${String(lastErr)}`,
+        fallback: true,
+      });
+    }
+
+    // Fall back to webhook with retry/backoff.
+    if (toolDef.webhookUrl) {
+      try {
+        validateWebhookUrl(toolDef.webhookUrl);
+      } catch (e) {
+        return JSON.stringify({ error: `Tool webhook URL rejected: ${String(e)}` });
+      }
+      const callId = typeof callContext.call_id === 'string' ? callContext.call_id : '';
+      return await withSpan(
+        SPAN_TOOL,
+        {
+          'patter.tool.name': toolDef.name,
+          'patter.tool.transport': 'webhook',
+          'patter.call.id': callId,
+        },
+        async (span) => {
+          const totalAttempts = this.maxRetries + 1;
+          for (let attempt = 0; attempt < totalAttempts; attempt++) {
+            span.setAttribute('patter.tool.attempt', attempt + 1);
+            try {
+              const resp = await fetch(toolDef.webhookUrl!, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  tool: toolDef.name,
+                  arguments: args,
+                  ...callContext,
+                  attempt: attempt + 1,
+                }),
+                // Use per-tool timeout when set, otherwise fall back to
+                // the executor-level default. Mirrors Python's per-request
+                // ``timeout=`` override on httpx.AsyncClient.post().
+                signal: AbortSignal.timeout(effectiveTimeoutMs),
+              });
+              if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+              const result = JSON.stringify(await resp.json());
+              if (result.length > TOOL_MAX_RESPONSE_BYTES) {
+                this.breaker.recordFailure(toolDef.name);
+                return JSON.stringify({
+                  error: `Webhook response too large: ${result.length} bytes (max ${TOOL_MAX_RESPONSE_BYTES})`,
+                  fallback: true,
+                });
+              }
+              this.breaker.recordSuccess(toolDef.name);
+              return result;
+            } catch (e) {
+              if (attempt < totalAttempts - 1) {
+                getLogger().warn(
+                  `Tool webhook '${toolDef.name}' failed (attempt ${attempt + 1}/${totalAttempts}), retrying: ${String(e)}`,
+                );
+                await new Promise<void>((r) => setTimeout(r, backoffDelayMs(this.retryDelayMs, attempt)));
+              } else {
+                span.recordException(e);
+                this.breaker.recordFailure(toolDef.name);
+                return JSON.stringify({
+                  error: `Tool failed after ${totalAttempts} attempts: ${String(e)}`,
+                  fallback: true,
+                });
+              }
+            }
+          }
+          // Unreachable — the for-loop always returns.
+          return JSON.stringify({
+            error: `Tool '${toolDef.name}' exited retry loop unexpectedly`,
+            fallback: true,
+          });
+        },
+      );
+    }
+
+    return JSON.stringify({
+      error: `No handler or webhookUrl for tool '${toolDef.name}'`,
+      fallback: true,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Provider interface
+// ---------------------------------------------------------------------------
+
+/** A single streaming chunk yielded by an LLM provider. */
+export interface LLMChunk {
+  type: 'text' | 'tool_call' | 'done' | 'usage';
+  content?: string;
+  index?: number;
+  id?: string;
+  name?: string;
+  arguments?: string;
+  // Fix 10: usage chunk fields (emitted by providers that expose token counts)
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
+}
+
+/**
+ * Interface that any LLM provider must satisfy.
+ *
+ * Implementors yield streaming ``LLMChunk`` objects:
+ * - ``{ type: "text", content: "..." }`` — a text token.
+ * - ``{ type: "tool_call", index, id?, name?, arguments? }`` — a (partial) tool
+ *   invocation.  Chunks with the same ``index`` are concatenated.
+ * - ``{ type: "done" }`` — signals the end of the stream (optional).
+ */
+/**
+ * Optional knobs passed by the LLM loop into ``provider.stream``. Today the
+ * only field is ``signal``: a per-turn AbortSignal that the stream handler
+ * trips on barge-in so the underlying ``fetch`` / SDK call is cancelled
+ * IMMEDIATELY instead of waiting for the next token. Without this, a
+ * barge-in fired while the upstream LLM is still composing its first
+ * sentence leaves the fetch open until the provider's own timeout (often
+ * 30 s) elapses, blocking the next user transcript and producing the
+ * "agent stays silent after interruption" symptom.
+ */
+export interface LLMStreamOptions {
+  signal?: AbortSignal;
+  /**
+   * Stable per-call id (the same value the stream handler builds into
+   * ``callCtx.call_id``). Threaded through purely so session-aware providers
+   * — currently {@link OpenAICompatibleLLMProvider} and its Hermes / OpenClaw
+   * presets — can emit the OpenAI ``user`` field as ``patter-call-<callId>``,
+   * giving the upstream agent runtime one durable session per phone call.
+   *
+   * Additive and optional: every existing provider reads only ``signal`` and
+   * is unaffected. When unset (or when a provider has no session-continuity
+   * config) no ``user`` field is sent — fully backward compatible.
+   */
+  callId?: string;
+  /**
+   * Caller / callee for this turn (the same values the stream handler builds
+   * into ``callCtx.caller`` / ``callCtx.callee``). Threaded purely so a
+   * session-aware provider with a ``sessionKeyFactory`` can derive a per-caller
+   * memory scope from the NON-REVERSIBLE caller hash. Additive and optional:
+   * providers that read only ``signal`` / ``callId`` ignore them, and the raw
+   * ``caller`` is never logged. Mirrors the Python loop threading
+   * ``caller`` / ``callee`` into the provider's ``stream``.
+   */
+  caller?: string;
+  callee?: string;
+}
+
+/**
+ * Combine multiple AbortSignals into one. Aborts as soon as ANY input
+ * fires (or if any input was already aborted). Defined here because
+ * ``AbortSignal.any`` only landed in Node 20.3 — Patter's ``engines.node``
+ * is ``>=18.0.0`` and we cannot break Node 18 users on the first LLM
+ * call. Falls through to ``AbortSignal.any`` when available so the polyfill
+ * cost is paid only on older runtimes.
+ */
+export function mergeAbortSignals(
+  ...signals: ReadonlyArray<AbortSignal | undefined | null>
+): AbortSignal {
+  const filtered = signals.filter(
+    (s): s is AbortSignal => s != null,
+  );
+  if (filtered.length === 1) return filtered[0];
+  if (typeof (AbortSignal as { any?: unknown }).any === 'function') {
+    return (AbortSignal as { any: (xs: AbortSignal[]) => AbortSignal }).any(
+      filtered,
+    );
+  }
+  const controller = new AbortController();
+  for (const sig of filtered) {
+    if (sig.aborted) {
+      controller.abort((sig as { reason?: unknown }).reason);
+      return controller.signal;
+    }
+    sig.addEventListener(
+      'abort',
+      () => controller.abort((sig as { reason?: unknown }).reason),
+      { once: true },
+    );
+  }
+  return controller.signal;
+}
+
+/** Default idle window for streaming LLM reads (no data for this long → abort). */
+export const LLM_STREAM_IDLE_TIMEOUT_MS = 30_000;
+
+/**
+ * Idle watchdog for streaming LLM reads. Aborts only when NO data has
+ * arrived for ``ms`` — call ``touch()`` on every chunk to re-arm. Replaces
+ * the previous fixed 30 s whole-stream ceiling, which chopped any turn that
+ * streamed longer than 30 s mid-utterance (long answers, slow models,
+ * tool-heavy iterations) and surfaced as an AbortError that the pipeline
+ * misclassified as a clean barge-in (so no spoken error fallback fired).
+ * Python providers have no whole-stream ceiling either, so this also
+ * restores behavioral parity.
+ */
+export function createStreamIdleWatchdog(ms: number = LLM_STREAM_IDLE_TIMEOUT_MS): {
+  readonly signal: AbortSignal;
+  touch(): void;
+  clear(): void;
+  readonly fired: boolean;
+} {
+  const controller = new AbortController();
+  let fired = false;
+  const onIdle = () => {
+    fired = true;
+    controller.abort();
+  };
+  let timer: ReturnType<typeof setTimeout> = setTimeout(onIdle, ms);
+  return {
+    signal: controller.signal,
+    touch(): void {
+      if (fired) return;
+      clearTimeout(timer);
+      timer = setTimeout(onIdle, ms);
+    },
+    clear(): void {
+      clearTimeout(timer);
+    },
+    get fired(): boolean {
+      return fired;
+    },
+  };
+}
+
+export interface LLMProvider {
+  stream(
+    messages: Array<Record<string, unknown>>,
+    tools?: Array<Record<string, unknown>> | null,
+    opts?: LLMStreamOptions,
+  ): AsyncGenerator<LLMChunk, void, unknown>;
+  /**
+   * Optional best-effort pre-call DNS / TLS / HTTP-keepalive warmup.
+   *
+   * Called once per outbound call from ``Patter.call`` when the agent has
+   * ``prewarm: true`` (the default). Concrete providers (OpenAI,
+   * Anthropic, Google, Cerebras, Groq) override this to issue a
+   * lightweight HTTPS GET to their inference endpoint so by the time the
+   * first ``stream()`` call lands, the connection pool already has a
+   * warm socket. Failures are logged at debug level and never abort the
+   * call — pure latency optimisation.
+   *
+   * Optional on the interface (``warmup?: ...``) so providers without a
+   * warmup hook still satisfy the type. Detected via runtime
+   * ``typeof provider.warmup === 'function'`` in the client.
+   */
+  warmup?(): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Built-in OpenAI provider
+// ---------------------------------------------------------------------------
+
+/** Optional sampling kwargs forwarded into the OpenAI Chat Completions body. */
+export interface OpenAILLMSamplingOptions {
+  /** Sampling temperature [0, 2]. */
+  temperature?: number;
+  /** Max tokens in the assistant response (sent as ``max_completion_tokens``). */
+  maxTokens?: number;
+  /** OpenAI-style ``response_format`` for JSON mode / structured outputs. */
+  responseFormat?: Record<string, unknown>;
+  /** Whether to allow parallel tool calls. */
+  parallelToolCalls?: boolean;
+  /** ``"auto" | "none" | "required"`` or a specific tool object. */
+  toolChoice?: string | Record<string, unknown>;
+  /** Sampling seed for reproducible outputs. */
+  seed?: number;
+  /** Nucleus sampling cutoff in [0, 1]. */
+  topP?: number;
+  /** Penalty in [-2, 2] applied to repeated tokens. */
+  frequencyPenalty?: number;
+  /** Penalty in [-2, 2] applied to seen tokens. */
+  presencePenalty?: number;
+  /** Stop sequence(s). */
+  stop?: string | string[];
+}
+
+/** LLM provider backed by OpenAI Chat Completions (streaming). */
+export class OpenAILLMProvider implements LLMProvider {
+  /** Stable pricing/dashboard key — read by stream-handler/metrics. */
+  static readonly providerKey = 'openai';
+  private readonly apiKey: string;
+  readonly model: string;
+  private readonly temperature?: number;
+  private readonly maxTokens?: number;
+  private readonly responseFormat?: Record<string, unknown>;
+  private readonly parallelToolCalls?: boolean;
+  private readonly toolChoice?: string | Record<string, unknown>;
+  private readonly seed?: number;
+  private readonly topP?: number;
+  private readonly frequencyPenalty?: number;
+  private readonly presencePenalty?: number;
+  private readonly stop?: string | string[];
+
+  constructor(apiKey: string, model: string, sampling: OpenAILLMSamplingOptions = {}) {
+    this.apiKey = apiKey;
+    this.model = model;
+    this.temperature = sampling.temperature;
+    this.maxTokens = sampling.maxTokens;
+    this.responseFormat = sampling.responseFormat;
+    this.parallelToolCalls = sampling.parallelToolCalls;
+    this.toolChoice = sampling.toolChoice;
+    this.seed = sampling.seed;
+    this.topP = sampling.topP;
+    this.frequencyPenalty = sampling.frequencyPenalty;
+    this.presencePenalty = sampling.presencePenalty;
+    this.stop = sampling.stop;
+  }
+
+  /** Subclasses (Cerebras, Groq) override this with their own host. */
+  protected get baseUrl(): string {
+    return 'https://api.openai.com/v1';
+  }
+
+  /**
+   * Pre-call DNS / TLS / HTTP-keepalive warmup.
+   *
+   * Issues a lightweight ``GET ${baseUrl}/models`` so DNS, TLS and HTTP/2
+   * are already up by the time the first ``chat.completions`` call lands.
+   * Best-effort: 5 s timeout, all exceptions swallowed at debug level.
+   *
+   * Note: an HTTPS GET warms DNS + TLS + connection pool but does NOT
+   * warm the inference path itself; for true inference warmup a real
+   * low-token request is needed, left as a follow-up. STT / TTS providers ship concrete
+   * WebSocket-based prewarms (Cartesia / Deepgram / AssemblyAI for STT;
+   * ElevenLabs WS for TTS) which save 200-500 ms each — those dominate
+   * the cold-start latency budget.
+   */
+  async warmup(): Promise<void> {
+    try {
+      await fetch(`${this.baseUrl}/models`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        signal: AbortSignal.timeout(5_000),
+      });
+    } catch (err) {
+      getLogger().debug(`LLM warmup failed (best-effort): ${String(err)}`);
+    }
+  }
+
+  /** Stream OpenAI Chat Completions chunks for the given messages/tools. */
+  async *stream(
+    messages: Array<Record<string, unknown>>,
+    tools?: Array<Record<string, unknown>> | null,
+    opts?: LLMStreamOptions,
+  ): AsyncGenerator<LLMChunk, void, unknown> {
+    const body: Record<string, unknown> = {
+      model: this.model,
+      messages,
+      stream: true,
+      // Ask OpenAI to include a final usage chunk so we can attribute token
+      // cost. Without this the dashboard shows LLM cost = 0 for OpenAI.
+      stream_options: { include_usage: true },
+    };
+    if (this.temperature !== undefined) body.temperature = this.temperature;
+    if (this.maxTokens !== undefined) {
+      // Current OpenAI spec uses ``max_completion_tokens``; ``max_tokens``
+      // is now legacy. Mirrors Cerebras/Groq parity.
+      body.max_completion_tokens = this.maxTokens;
+    }
+    if (this.responseFormat !== undefined) body.response_format = this.responseFormat;
+    if (this.parallelToolCalls !== undefined) body.parallel_tool_calls = this.parallelToolCalls;
+    if (this.toolChoice !== undefined) body.tool_choice = this.toolChoice;
+    if (this.seed !== undefined) body.seed = this.seed;
+    if (this.topP !== undefined) body.top_p = this.topP;
+    if (this.frequencyPenalty !== undefined) body.frequency_penalty = this.frequencyPenalty;
+    if (this.presencePenalty !== undefined) body.presence_penalty = this.presencePenalty;
+    if (this.stop !== undefined) body.stop = this.stop;
+    if (tools) {
+      body.tools = tools;
+    }
+
+    // Combine the caller's per-turn cancel signal (barge-in) with an IDLE
+    // watchdog (re-armed on every chunk). ``AbortSignal.any`` aborts as soon
+    // as ANY input signal fires, so a barge-in that arrives mid-fetch tears
+    // the connection down immediately instead of waiting for the timeout.
+    const idle = createStreamIdleWatchdog();
+    const signal = mergeAbortSignals(opts?.signal, idle.signal);
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      // Cap the logged body like the thrown message — provider 401 bodies
+      // have been observed to embed the rejected API-key prefix, and the
+      // full text would otherwise land in operator logs.
+      getLogger().error(`LLM API error: ${response.status} ${errText.slice(0, 200)}`);
+      throw new PatterConnectionError(
+        `LLM API returned ${response.status}: ${errText.slice(0, 200)}`,
+      );
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        idle.touch();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data: ')) continue;
+          const data = trimmed.slice(6);
+          if (data === '[DONE]') continue;
+
+          let chunk: {
+            choices?: Array<{
+              delta?: {
+                content?: string;
+                tool_calls?: Array<{
+                  index: number;
+                  id?: string;
+                  function?: { name?: string; arguments?: string };
+                }>;
+              };
+            }>;
+            usage?: {
+              prompt_tokens?: number;
+              completion_tokens?: number;
+              prompt_tokens_details?: { cached_tokens?: number };
+            };
+          };
+          try {
+            chunk = JSON.parse(data);
+          } catch {
+            continue;
+          }
+
+          // Final usage chunk arrives with choices=[] when stream_options
+          // include_usage is set. Forward it for cost attribution.
+          if (chunk.usage) {
+            const cached = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
+            // OpenAI's prompt_tokens is the TOTAL input including cached tokens.
+            // Subtract cached so inputTokens represents only the uncached portion
+            // and calculateLlmCost doesn't bill cached tokens at the full rate.
+            const uncachedInput = Math.max(0, (chunk.usage.prompt_tokens ?? 0) - cached);
+            yield {
+              type: 'usage',
+              inputTokens: uncachedInput,
+              outputTokens: chunk.usage.completion_tokens,
+              cacheReadInputTokens: cached,
+            };
+          }
+
+          const delta = chunk.choices?.[0]?.delta;
+          if (!delta) continue;
+
+          if (delta.content) {
+            yield { type: 'text', content: delta.content };
+          }
+
+          if (delta.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              yield {
+                type: 'tool_call',
+                index: tc.index,
+                id: tc.id,
+                name: tc.function?.name,
+                arguments: tc.function?.arguments,
+              };
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // Distinguish the idle watchdog from a caller abort (barge-in): the
+      // pipeline treats AbortError as a clean cancel and stays silent, so a
+      // genuine stall must surface as a connection error to trigger the LLM
+      // fallback chain / spoken error message.
+      if (idle.fired && !opts?.signal?.aborted) {
+        throw new PatterConnectionError(
+          `LLM stream idle timeout — no data for ${LLM_STREAM_IDLE_TIMEOUT_MS / 1000}s`,
+        );
+      }
+      throw err;
+    } finally {
+      idle.clear();
+      reader.cancel().catch(() => {});
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+
+interface OpenAIMessage {
+  role: string;
+  content?: string | null;
+  tool_calls?: Array<{
+    id: string;
+    type: string;
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
+  [key: string]: unknown;
+}
+
+interface ToolCallAccumulator {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+// ---------------------------------------------------------------------------
+// LLM loop
+// ---------------------------------------------------------------------------
+
+/** Default phone-friendly preamble prepended to user system prompts unless `disablePhonePreamble` is set. */
+export const DEFAULT_PHONE_PREAMBLE =
+  'You are speaking on a live phone call. Respond concisely. ' +
+  'Do not use markdown, headers, bullet lists, code fences, or emojis. ' +
+  'Spell out numbers, currencies, dates, and units in natural spoken language. ' +
+  'Keep replies under 2 sentences unless the caller asks for detail.';
+
+
+/** Pipeline-mode LLM driver: runs the chat loop, dispatches tool calls, and emits text deltas. */
+export class LLMLoop {
+  private readonly provider: LLMProvider;
+  // Mutable (not readonly): `updateAgent` swaps these mid-call for
+  // multi-agent handoff. The swap takes effect on the NEXT turn.
+  private systemPrompt: string;
+  private disablePhonePreamble: boolean;
+  private tools: ToolDefinition[] | null;
+  private openaiTools: Array<{
+    type: string;
+    function: { name: string; description: string; parameters: Record<string, unknown> };
+  }> | null;
+  private toolMap: Map<string, ToolDefinition>;
+  private toolExecutor: ToolExecutor;
+  private eventBus?: EventBus;
+  // Fix 10: track provider/model so usage chunks can be attributed for billing.
+  private readonly _providerName: string;
+  private readonly _modelName: string;
+  // Diagnostics for the char/4 fallback billing path (see iterate loop).
+  // Counted per-LLMLoop instance (i.e. per call). Surfaced only via logs
+  // — keeps recordLlmUsage's public signature unchanged. Parity with Python.
+  private _usageMissingCount = 0;
+  private _loggedUsageFallback = false;
+  // Optional async observer fired after a successful tool execution so
+  // the host SDK (StreamHandler in pipeline mode) can surface tool calls
+  // into the transcript timeline / `onTranscript` callback. Mirrors the
+  // Python `on_tool_call` parameter on `LLMLoop.__init__`.
+  private onToolCall?: (
+    name: string,
+    args: Record<string, unknown>,
+    result: string,
+  ) => Promise<void>;
+
+  constructor(
+    apiKey: string,
+    model: string,
+    systemPrompt: string,
+    tools?: ToolDefinition[] | null,
+    llmProvider?: LLMProvider,
+    disablePhonePreamble: boolean = false,
+  ) {
+    this.provider = llmProvider ?? new OpenAILLMProvider(apiKey, model);
+    this.disablePhonePreamble = disablePhonePreamble;
+    this.systemPrompt = LLMLoop.applyPhonePreamble(systemPrompt, disablePhonePreamble);
+    // Derive a billing-friendly provider name. Prefer the static
+    // ``providerKey`` (stable, matches pricing keys); fall back to the
+    // class-name stripping heuristic for custom providers without it.
+    if (llmProvider) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const key = (llmProvider.constructor as any)?.providerKey;
+      if (key) {
+        this._providerName = key;
+      } else {
+        const stripped = (llmProvider.constructor?.name ?? 'custom')
+          .replace(/LLMProvider$/i, '')
+          .replace(/LLM$/i, '')
+          .replace(/Provider$/i, '')
+          .toLowerCase();
+        this._providerName = stripped || 'custom';
+      }
+    } else {
+      this._providerName = 'openai';
+    }
+    this._modelName = model;
+    this.tools = tools ?? null;
+    this.toolExecutor = new DefaultToolExecutor();
+
+    this.toolMap = new Map();
+    this.openaiTools = null;
+    this.rebuildToolState(this.tools);
+  }
+
+  /**
+   * Prepend {@link DEFAULT_PHONE_PREAMBLE} unless disabled — byte-identical
+   * to the historical inline constructor logic.
+   */
+  private static applyPhonePreamble(systemPrompt: string, disablePhonePreamble: boolean): string {
+    if (disablePhonePreamble) return systemPrompt;
+    return systemPrompt
+      ? `${DEFAULT_PHONE_PREAMBLE}\n\n${systemPrompt}`
+      : DEFAULT_PHONE_PREAMBLE;
+  }
+
+  /** (Re)build `openaiTools` and `toolMap` from a tool list. */
+  private rebuildToolState(tools: ToolDefinition[] | null): void {
+    this.toolMap = new Map();
+    this.openaiTools = null;
+    if (tools && tools.length > 0) {
+      this.openaiTools = [];
+      for (const t of tools) {
+        this.openaiTools.push({
+          type: 'function',
+          function: {
+            name: t.name,
+            description: t.description || '',
+            parameters: (t.parameters || { type: 'object', properties: {} }) as Record<string, unknown>,
+          },
+        });
+        this.toolMap.set(t.name, t);
+      }
+    }
+  }
+
+  /**
+   * Swap the system prompt and/or tool list mid-call (multi-agent handoff).
+   *
+   * Takes effect on the NEXT turn — `run` builds its messages array (with
+   * the system prompt at index 0) per turn, and reads `openaiTools` per
+   * provider iteration, so a swap that lands while a turn is in flight
+   * finishes the current turn under the old prompt and runs every subsequent
+   * turn as the new agent. Omitted fields keep the corresponding current
+   * value. Mirrors Python `LLMLoop.update_agent`.
+   */
+  updateAgent(update: {
+    systemPrompt?: string;
+    tools?: ToolDefinition[];
+    disablePhonePreamble?: boolean;
+  }): void {
+    if (update.disablePhonePreamble !== undefined) {
+      this.disablePhonePreamble = update.disablePhonePreamble;
+    }
+    if (update.systemPrompt !== undefined) {
+      this.systemPrompt = LLMLoop.applyPhonePreamble(
+        update.systemPrompt,
+        this.disablePhonePreamble,
+      );
+    }
+    if (update.tools !== undefined) {
+      this.tools = update.tools;
+      this.rebuildToolState(update.tools);
+    }
+  }
+
+  /**
+   * Swap in a custom tool executor (e.g. different retry policy, metrics
+   * wrapping, tenant-aware fan-out). The default is ``DefaultToolExecutor``.
+   */
+  setToolExecutor(executor: ToolExecutor): void {
+    this.toolExecutor = executor;
+  }
+
+  /**
+   * Wire an :class:`EventBus` so the loop emits ``llm_chunk`` per text
+   * token and ``tool_call_started`` the first time each tool-call index
+   * appears. Set to ``undefined`` to disable.
+   */
+  setEventBus(bus: EventBus | undefined): void {
+    this.eventBus = bus;
+  }
+
+  /**
+   * Set or replace the post-tool-execution observer. The callback is
+   * awaited after every successful tool execution with
+   * `(name, args, result)`. Pass `undefined` to disable. Mirrors the
+   * Python `LLMLoop.set_on_tool_call` setter so callers (e.g. the
+   * pipeline `StreamHandler`) can wire the loop after construction.
+   */
+  setOnToolCall(
+    callback:
+      | ((name: string, args: Record<string, unknown>, result: string) => Promise<void>)
+      | undefined,
+  ): void {
+    this.onToolCall = callback;
+  }
+
+  /**
+   * Stream LLM response tokens, handling tool calls automatically.
+   * Yields text tokens as they arrive from the LLM.
+   *
+   * @param metrics Optional usage recorder — when provided, usage chunks
+   *   from the provider are forwarded to {@link LlmUsageRecorder.recordLlmUsage}
+   *   so token costs are included in the call cost breakdown (fix 10).
+   */
+  async *run(
+    userText: string,
+    history: Array<{ role: string; text: string }>,
+    callContext: Record<string, unknown>,
+    metrics?: LlmUsageRecorder,
+    hookExecutor?: PipelineHookExecutor,
+    hookCtx?: HookContext,
+    opts?: LLMStreamOptions,
+  ): AsyncGenerator<string, void, unknown> {
+    let messages = this.buildMessages(history, userText);
+    const maxIterations = 10;
+    // Run before_llm once on the initial messages list. Subsequent
+    // tool-call iterations re-submit augmented messages and skip the
+    // hook (running on every iteration would let a poorly written hook
+    // trigger an infinite re-write loop).
+    if (hookExecutor && hookCtx) {
+      // Hooks return ``Record<string, unknown>[]``; the loop tracks them
+      // as ``OpenAIMessage[]`` since callers may push tool-call entries
+      // with the stricter shape. The runtime fields are identical.
+      messages = (await hookExecutor.runBeforeLlm(
+        messages as Array<Record<string, unknown>>,
+        hookCtx,
+      )) as OpenAIMessage[];
+    }
+    // Tier 3 (`onResponse`) — and the deprecated legacy callable that maps
+    // to it — buffer streaming tokens, run the hook against the final
+    // assistant text, and yield the (possibly rewritten) text as a single
+    // chunk. Tier 1 (`onChunk`) and tier 2 (`onSentence`) keep streaming.
+    // Tier 1 transform is applied inline below; tier 2 runs in the
+    // sentence chunker / stream-handler downstream.
+    const hasAfterLlmResponse = Boolean(hookExecutor?.hasAfterLlmResponse() && hookCtx);
+    const hasAfterLlmChunk = Boolean(hookExecutor?.hasAfterLlmChunk());
+    const allEmittedText: string[] = [];
+
+    // Thread the stable per-call id (plus caller / callee for a
+    // sessionKeyFactory) into the provider stream options so session-aware
+    // providers (OpenAI-compatible / Hermes / OpenClaw) can emit the ``user``
+    // field / memory-scope header for one runtime session per phone call.
+    // Purely additive: providers that read only ``signal`` ignore them. Only
+    // build the augmented opts when at least one context value is a non-empty
+    // string — leave ``opts`` untouched otherwise so existing behaviour is
+    // byte-identical when no call context is present. The raw caller is never
+    // logged; a factory keys off its non-reversible hash.
+    const callId = callContext.call_id;
+    const caller = callContext.caller;
+    const callee = callContext.callee;
+    const hasContext =
+      (typeof callId === 'string' && callId.length > 0) ||
+      (typeof caller === 'string' && caller.length > 0) ||
+      (typeof callee === 'string' && callee.length > 0);
+    const streamOpts: LLMStreamOptions | undefined = hasContext
+      ? {
+          ...opts,
+          ...(typeof callId === 'string' && callId.length > 0 ? { callId } : {}),
+          ...(typeof caller === 'string' && caller.length > 0 ? { caller } : {}),
+          ...(typeof callee === 'string' && callee.length > 0 ? { callee } : {}),
+        }
+      : opts;
+
+    for (let iter = 0; iter < maxIterations; iter++) {
+      const toolCallsAccumulated = new Map<number, ToolCallAccumulator>();
+      const textParts: string[] = [];
+      let hasToolCalls = false;
+      let usageChunkReceived = false;
+
+      for await (const chunk of this.provider.stream(messages, this.openaiTools, streamOpts)) {
+        if (chunk.type === 'text' && chunk.content) {
+          // Tier 1 — per-token sync transform. Cheap, no buffering.
+          const content = hasAfterLlmChunk && hookExecutor
+            ? hookExecutor.runAfterLlmChunk(chunk.content)
+            : chunk.content;
+          textParts.push(content);
+          this.eventBus?.emit('llm_chunk', { text: content, iteration: iter });
+          if (hasAfterLlmResponse) {
+            allEmittedText.push(content);
+          } else {
+            yield content;
+          }
+        } else if (chunk.type === 'usage') {
+          // Fix 10: forward token usage to the metrics accumulator for billing.
+          usageChunkReceived = true;
+          metrics?.recordLlmUsage(
+            this._providerName,
+            this._modelName,
+            chunk.inputTokens ?? 0,
+            chunk.outputTokens ?? 0,
+            chunk.cacheReadInputTokens ?? 0,
+            chunk.cacheWriteInputTokens ?? 0,
+          );
+        } else if (chunk.type === 'tool_call') {
+          hasToolCalls = true;
+          const idx = chunk.index ?? 0;
+          if (!toolCallsAccumulated.has(idx)) {
+            toolCallsAccumulated.set(idx, { id: '', name: '', arguments: '' });
+            // Emit tool_call_started the first time we see a given index.
+            this.eventBus?.emit('tool_call_started', {
+              index: idx,
+              name: chunk.name ?? '',
+              args: chunk.arguments ?? '',
+            });
+          }
+          const acc = toolCallsAccumulated.get(idx)!;
+          if (chunk.id) acc.id = chunk.id;
+          if (chunk.name) acc.name = chunk.name;
+          if (chunk.arguments) acc.arguments += chunk.arguments;
+        }
+      }
+
+      // Fallback billing: some providers (Cerebras streaming has been
+      // observed to do this on certain chunk-shape variants) don't emit
+      // a ``usage`` chunk even with ``stream_options: { include_usage: true }``.
+      // Without this fallback the LLM cost silently shows ~0 for the
+      // whole call. char/4 is the canonical OpenAI-tokenizer rough estimate;
+      // conservative-upward is preferable to silent zero. Parity with Python.
+      if (!usageChunkReceived && metrics) {
+        let inputChars = 0;
+        for (const m of messages) {
+          const c = (m as { content?: unknown }).content;
+          if (typeof c === 'string') inputChars += c.length;
+        }
+        const outputChars = textParts.reduce((s, p) => s + p.length, 0);
+        const estimatedInput = Math.max(1, Math.floor(inputChars / 4));
+        const estimatedOutput = Math.max(1, Math.floor(outputChars / 4));
+        metrics.recordLlmUsage(
+          this._providerName,
+          this._modelName,
+          estimatedInput,
+          estimatedOutput,
+          0,
+          0,
+        );
+        this._usageMissingCount += 1;
+        // First fallback in this call → INFO so the operator sees it once.
+        // Subsequent iterations only DEBUG to avoid spamming logs on long
+        // tool-loop turns where every iteration is char/4-billed. Parity Py.
+        if (!this._loggedUsageFallback) {
+          this._loggedUsageFallback = true;
+          getLogger().info(
+            `llm_usage_fallback provider=${this._providerName} ` +
+              `model=${this._modelName} input_chars=${inputChars} ` +
+              `output_chars=${outputChars} est_input_tokens=${estimatedInput} ` +
+              `est_output_tokens=${estimatedOutput}`,
+          );
+        } else {
+          getLogger().debug(
+            `llm_usage_fallback provider=${this._providerName} ` +
+              `model=${this._modelName} iteration=${iter} ` +
+              `input_chars=${inputChars} output_chars=${outputChars} ` +
+              `est_input_tokens=${estimatedInput} ` +
+              `est_output_tokens=${estimatedOutput} ` +
+              `total_missing=${this._usageMissingCount}`,
+          );
+        }
+      }
+
+      // Barge-in guard: when the caller's abort signal fired mid-stream the
+      // accumulated tool-call JSON can be truncated — executing those calls
+      // would fire real side effects (transfer, SMS, booking) with wrong
+      // arguments after the user already interrupted. Bail out before tool
+      // dispatch (mirrors the Python llm_loop cancel_event check).
+      if (opts?.signal?.aborted) return;
+
+      if (!hasToolCalls) {
+        if (hasAfterLlmResponse && hookExecutor && hookCtx) {
+          const finalText = allEmittedText.join('');
+          const rewritten = await hookExecutor.runAfterLlmResponse(finalText, hookCtx);
+          if (rewritten) yield rewritten;
+        }
+        return;
+      }
+
+      // Execute tool calls and add results to messages
+      const assistantMsg: OpenAIMessage = {
+        role: 'assistant',
+        content: textParts.join('') || null,
+        tool_calls: [],
+      };
+
+      const sortedIndices = [...toolCallsAccumulated.keys()].sort((a, b) => a - b);
+      for (const idx of sortedIndices) {
+        const tc = toolCallsAccumulated.get(idx)!;
+        assistantMsg.tool_calls!.push({
+          id: tc.id,
+          type: 'function',
+          function: { name: tc.name, arguments: tc.arguments },
+        });
+      }
+      messages.push(assistantMsg);
+
+      for (const tcData of assistantMsg.tool_calls!) {
+        // Stop between tools when a barge-in aborted the turn — the
+        // remaining (and current) executions would run against a cancelled
+        // turn and block the next committed transcript behind them.
+        if (opts?.signal?.aborted) return;
+        const toolName = tcData.function.name;
+        let args: Record<string, unknown>;
+        try {
+          args = JSON.parse(tcData.function.arguments);
+        } catch {
+          args = {};
+        }
+
+        const result = await this.executeTool(toolName, args, callContext);
+        messages.push({
+          role: 'tool',
+          tool_call_id: tcData.id,
+          content: result,
+        });
+        // Surface successful tool execution to the host SDK
+        // (StreamHandler in pipeline mode). Failures in the observer must
+        // NOT abort the LLM loop — log and continue. Mirrors the Python
+        // `_on_tool_call` invocation in `llm_loop.py`.
+        if (this.onToolCall) {
+          try {
+            await this.onToolCall(toolName, args, result);
+          } catch (err) {
+            getLogger().error(
+              `onToolCall observer failed for tool '${toolName}': ${String(err)}`,
+            );
+          }
+        }
+      }
+    }
+
+    getLogger().warn(`LLM loop hit max iterations (${maxIterations})`);
+  }
+
+  private async executeTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    callContext: Record<string, unknown>,
+  ): Promise<string> {
+    const toolDef = this.toolMap.get(toolName);
+    if (!toolDef) {
+      return JSON.stringify({ error: `Unknown tool: ${toolName}` });
+    }
+    return this.toolExecutor.execute(toolDef, args, callContext);
+  }
+
+  private buildMessages(
+    history: Array<{ role: string; text: string }>,
+    userText: string,
+  ): OpenAIMessage[] {
+    const messages: OpenAIMessage[] = [
+      { role: 'system', content: this.systemPrompt },
+    ];
+
+    for (const entry of history) {
+      // Tool entries in conversation history are display/dashboard
+      // artefacts. Replaying them as ``role: 'tool'`` would 400 on the
+      // OpenAI API (no paired assistant ``tool_calls`` message), and
+      // replaying them as ``role: 'user'`` fabricates user turns containing
+      // raw tool JSON. Skip them: the tool RESULT is already reflected in
+      // the assistant's following reply. Mirrors Python ``_build_messages``.
+      if (entry.role === 'tool') continue;
+      // System entries (call-transfer / multi-agent-handoff markers) are
+      // transcript artefacts; replaying them as ``role: 'user'`` would
+      // fabricate user turns. The handoff itself is already reflected by the
+      // swapped system prompt at index 0. Mirrors Python ``_build_messages``.
+      if (entry.role === 'system') continue;
+      messages.push({
+        role: entry.role === 'assistant' ? 'assistant' : 'user',
+        content: entry.text,
+      });
+    }
+
+    messages.push({ role: 'user', content: userText });
+    return messages;
+  }
+}

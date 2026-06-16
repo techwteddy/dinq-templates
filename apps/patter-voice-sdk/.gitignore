@@ -1,0 +1,43 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+*.db
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# .claude/ (AI-agent config: rules, agents, hooks, local state) and the root
+# CLAUDE.md stay local (root and per-library).
+.claude/
+CLAUDE.md
+node_modules/
+*.sqlite
+*.log
+# Per-call logs/transcripts written by serve(callLogDir) — runtime artifacts
+# that contain caller PII (phone numbers, transcripts). Never commit.
+call-logs/
+.DS_Store
+settings.json
+.worktrees/
+docs/internal/
+# Legacy build dir from pre-rename Python SDK (sdk/ -> sdk-py/ in 0.4.2)
+sdk/
+# AI agent local state (Agent Skills live in the dedicated PatterAI/skills repo)
+.agents/
+.crush/
+.goose/
+skills-lock.json
+# TypeScript build / coverage / pack artifacts
+*.tsbuildinfo
+coverage/
+*.tgz

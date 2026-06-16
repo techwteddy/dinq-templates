@@ -1,0 +1,521 @@
+---
+title: "Tools"
+description: "Function calling, webhook tools, and system tools for voice agents."
+icon: "wrench"
+---
+
+# Tools
+
+Tools let your agent perform actions during a call — look up customer data, book appointments, process payments, and more. Tools are defined as webhooks that the SDK calls when the AI model invokes them.
+
+## Defining Tools
+
+Each tool requires a `name`, `description`, `parameters` (JSON Schema), and `webhookUrl`:
+
+```typescript
+const agent = phone.agent({
+  systemPrompt: "You are a scheduling assistant.",
+  tools: [
+    {
+      name: "check_availability",
+      description: "Check available appointment slots for a given date.",
+      parameters: {
+        type: "object",
+        properties: {
+          date: {
+            type: "string",
+            description: "Date in YYYY-MM-DD format",
+          },
+        },
+        required: ["date"],
+      },
+      webhookUrl: "https://api.example.com/availability",
+    },
+    {
+      name: "book_appointment",
+      description: "Book an appointment at the specified date and time.",
+      parameters: {
+        type: "object",
+        properties: {
+          date: { type: "string", description: "Date in YYYY-MM-DD format" },
+          time: { type: "string", description: "Time in HH:MM format" },
+          name: { type: "string", description: "Customer name" },
+        },
+        required: ["date", "time", "name"],
+      },
+      webhookUrl: "https://api.example.com/book",
+    },
+  ],
+});
+```
+
+## ToolDefinition Interface
+
+```typescript
+interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>; // JSON Schema
+  webhookUrl?: string;  // Required if handler is not provided
+  handler?: (args: Record<string, unknown>, context: Record<string, unknown>) => Promise<string>;
+}
+```
+
+<Note>
+  Every tool must have either a `webhookUrl` or a `handler`. Providing neither raises an error.
+</Note>
+
+## Webhook Payload
+
+When the AI model invokes a tool, the SDK sends a POST request to the `webhookUrl` with the following JSON body:
+
+```json
+{
+  "tool": "check_availability",
+  "arguments": {
+    "date": "2025-03-15"
+  },
+  "call_id": "call_abc123",
+  "caller": "+15551234567",
+  "callee": "+15550001234",
+  "attempt": 1
+}
+```
+
+The `attempt` field is a 1-based retry counter (1 on the first try, up to 3).
+
+Your webhook must return a JSON response. The response text is fed back to the AI model as the tool result.
+
+## Webhook Behavior
+
+| Setting | Value |
+|---------|-------|
+| HTTP method | POST |
+| Content type | `application/json` |
+| Timeout | 10 seconds |
+| Max response size | 1 MB |
+| Retries | 3 attempts with exponential backoff |
+
+If all retries fail, the SDK returns an error message to the AI model so it can inform the caller gracefully. Same retry + circuit-breaker policy applies to in-process handlers — see [Retries & circuit breaker](#retries--circuit-breaker) below.
+
+## LLM Loop Limits
+
+When using the built-in LLM loop (pipeline mode without an `onMessage` handler), the following safety limits apply:
+
+| Setting | Value |
+|---------|-------|
+| Max iterations | 10 (tool-call round-trips before the loop stops) |
+| LLM request timeout | 30 seconds (`AbortSignal.timeout`) |
+
+## SSRF Protection
+
+All webhook URLs are validated before requests are sent. The following are blocked:
+
+- Private IP ranges: `127.x.x.x`, `10.x.x.x`, `172.16-31.x.x`, `192.168.x.x`
+- Link-local addresses: `169.254.x.x`
+- Loopback: `localhost`, `::1`
+- Cloud metadata endpoints: `metadata.google.internal`
+- Non-HTTP schemes (only `http:` and `https:` are allowed)
+
+```typescript
+// Blocked — private address
+webhookUrl: "http://127.0.0.1:3000/api"
+
+// Blocked — cloud metadata
+webhookUrl: "http://metadata.google.internal/computeMetadata/v1"
+
+// Allowed
+webhookUrl: "https://api.example.com/webhook"
+```
+
+## System Tools
+
+Two tools are automatically injected into every agent. You do not need to define them:
+
+### transfer_call
+
+Transfers the current call to another phone number. The AI model invokes this when the caller asks to speak to a human or be transferred.
+
+```json
+{
+  "name": "transfer_call",
+  "parameters": {
+    "number": "+15559876543"
+  }
+}
+```
+
+The SDK uses the Twilio REST API to redirect the call to the target number.
+
+Pass `mode: "warm"` (plus an optional `summary`) for a **warm transfer**: the caller is parked on hold music, the human agent is dialed and hears the summary, then the two are bridged and the AI drops out. Warm mode is implemented on **Twilio** today; Telnyx and Plivo return a clear `{ error }` envelope (the AI keeps the call) instead of silently falling back to a blind redirect. `mode: "cold"` (the default when omitted) keeps the historical blind-transfer behaviour byte-identical.
+
+```json
+{
+  "name": "transfer_call",
+  "parameters": {
+    "number": "+15559876543",
+    "mode": "warm",
+    "summary": "Mario needs help with order 12."
+  }
+}
+```
+
+### end_call
+
+Ends the current call. The AI model invokes this when the conversation is complete or the caller says goodbye.
+
+```json
+{
+  "name": "end_call",
+  "parameters": {
+    "reason": "conversation_complete"
+  }
+}
+```
+
+### handoff_to
+
+Injected **only** when the agent is built with `handoffs: {...}` — a registry of named target agents:
+
+```typescript
+const billing = phone.agent({ systemPrompt: "You are the billing specialist.", engine, tools: [...] });
+const triage = phone.agent({
+  systemPrompt: "You answer first and route the caller.",
+  engine,
+  handoffs: { billing },
+});
+```
+
+```json
+{
+  "name": "handoff_to",
+  "parameters": {
+    "name": "billing",
+    "reason": "invoice question"
+  }
+}
+```
+
+Calling it swaps the **live call** to the target agent's system prompt, tools, variables, guardrails, and onward `handoffs` — conversation history is preserved and a `[handoff]` system line is recorded in the transcript. Works in Realtime mode (via a mid-session `session.update`) and Pipeline mode (the next LLM turn runs as the target agent). Audio infrastructure established at call start (STT/TTS/engine connection — and therefore the voice on engines that cannot switch voice mid-session) is retained. Unknown names return an error envelope to the model, never silence.
+
+## In-Process Handlers
+
+Instead of webhook URLs, you can pass a function that runs in-process:
+
+```typescript
+const agent = phone.agent({
+  systemPrompt: "You are a product specialist.",
+  tools: [
+    tool({
+      name: "check_inventory",
+      description: "Check if a product is in stock.",
+      parameters: {
+        type: "object",
+        properties: {
+          productId: { type: "string", description: "Product ID" },
+        },
+        required: ["productId"],
+      },
+      handler: async (args, context) => {
+        const stock = await db.getStock(args.productId as string);
+        return JSON.stringify({ productId: args.productId, inStock: stock > 0, quantity: stock });
+      },
+    }),
+  ],
+});
+```
+
+The handler receives:
+- `args` — The arguments extracted by the AI
+- `context` — Call metadata (`callId`, `caller`, `callee`)
+
+---
+
+## Validation
+
+The `phone.agent()` method validates tools at creation time:
+
+- `tools` must be an array
+- Each tool must have a `name` field
+- Each tool must have either a `webhookUrl` or `handler` field
+
+Missing fields throw descriptive errors:
+
+```typescript
+// Throws: tools[0] requires either 'webhookUrl' or 'handler'
+phone.agent({
+  systemPrompt: "...",
+  tools: [{ name: "test", description: "test", parameters: {} }] as any,
+});
+```
+
+---
+
+## Schema validation at build time
+
+Patter structurally validates every tool's `parameters` schema the moment you call `phone.agent({ tools: [...] })`. Typos that previously failed silently mid-call (`required: "name"` instead of `required: ["name"]`) now throw `ToolSchemaError` immediately, naming the offending tool.
+
+The validator checks:
+
+- The root must be `type: "object"`.
+- `properties` must be an object map of field name to JSON Schema.
+- `required` must be an array of strings.
+- Every entry in `required` must exist in `properties`.
+
+```typescript
+import { Patter, ToolSchemaError } from "getpatter";
+
+try {
+  phone.agent({
+    systemPrompt: "...",
+    tools: [
+      {
+        name: "lookup_order",
+        description: "Find an order.",
+        parameters: {
+          type: "object",
+          properties: { orderId: { type: "string" } },
+          required: "orderId" as any, // bug: should be an array
+        },
+        webhookUrl: "https://api.example.com/orders",
+      },
+    ],
+  });
+} catch (e) {
+  if (e instanceof ToolSchemaError) {
+    console.error(e.message);
+    // tool 'lookup_order': `parameters.required` must be an array of field names.
+  }
+}
+```
+
+<Note>
+  Validation lives in `getpatter/tools/schema-validation` and runs once per tool at agent build time. There is no per-call runtime overhead.
+</Note>
+
+---
+
+## Streaming progress from long-running tools
+
+Realtime mode only. When a tool takes more than a moment to run -- a database query, a multi-step API workflow, a file generation -- you can write the handler as an `async function*` generator and `yield { progress: "..." }` updates while it works. Each progress message is spoken inline by the agent so the caller hears live status instead of dead air.
+
+The generator's `return` value (or final `yield { result: "..." }`) becomes the function-call result the model sees.
+
+```typescript
+import { Patter, defineTool } from "getpatter";
+
+const searchProducts = defineTool({
+  name: "search_products",
+  description: "Search the product catalogue.",
+  parameters: {
+    query: { type: "string", description: "Free-text search" },
+  },
+  // Switch to async function* to opt into progress streaming.
+  handler: async function* (args) {
+    yield { progress: "Searching the database..." };
+    const rows = await db.search(args.query as string);
+
+    yield { progress: `Found ${rows.length} matches, ranking now...` };
+    const ranked = await rank(rows);
+
+    return JSON.stringify({ topResults: ranked.slice(0, 5) });
+  },
+});
+
+const agent = phone.agent({
+  systemPrompt: "You help customers find products.",
+  tools: [searchProducts],
+});
+```
+
+<Note>
+  Plain `async` handlers continue to work unchanged -- streaming is purely opt-in by switching to a generator. Pipeline mode silently discards `progress` yields for now and uses only the final result; Realtime mode is fully supported.
+</Note>
+
+---
+
+## Reassurance during long tool calls
+
+Realtime mode only. Even with progress streaming, some tools take a beat before they have anything useful to say. The `reassurance` field on a tool lets you set a single filler line the agent will speak if the tool hasn't returned within a grace window (default 1500 ms). If the tool returns earlier, the timer is cancelled and the line is never spoken.
+
+```typescript
+const agent = phone.agent({
+  systemPrompt: "You are a booking assistant.",
+  tools: [
+    // String shorthand — fires after the default 1500 ms.
+    {
+      name: "check_availability",
+      description: "Check open appointment slots.",
+      parameters: {
+        type: "object",
+        properties: { date: { type: "string" } },
+        required: ["date"],
+      },
+      webhookUrl: "https://api.example.com/availability",
+      reassurance: "Let me check the calendar for you...",
+    },
+
+    // Object form — explicit grace window.
+    {
+      name: "run_credit_check",
+      description: "Run a credit check.",
+      parameters: {
+        type: "object",
+        properties: { ssn: { type: "string" } },
+        required: ["ssn"],
+      },
+      handler: creditCheckHandler,
+      reassurance: {
+        message: "One moment while I pull that up — this can take a few seconds.",
+        afterMs: 800,
+      },
+    },
+  ],
+});
+```
+
+<Note>
+  Pipeline mode silently skips reassurance for now -- there is no clean injection point mid-turn. If you need it for a Pipeline agent, prefer an `async function*` handler with a first `yield { progress: "..." }`.
+</Note>
+
+The filler is spoken as the assistant's own line — it does **not** add a fake caller turn to the transcript. (Earlier builds injected the filler as a `role:"user"` item, which made the transcript falsely show the caller saying "One moment." and could confuse the model. The filler now travels through a dedicated assistant-attributed path.) Keep the wording neutral — a good filler tells the caller you're working on it without implying the result, e.g. `"One moment."`, `"Let me check."`, `"Give me a moment."`.
+
+## Tool-call preambles
+
+Realtime mode only; most effective on `gpt-realtime-2`, where preambles are first-class. For tools that take a noticeable beat (30–60 s browser automation, external lookups), `toolCallPreambles` makes the model speak one short, action-describing sentence **in its own voice** immediately before the tool call — "I'll check that order now." — so the caller hears that work is happening. This is OpenAI's native, recommended UX for slow tools and is steered entirely through the session `instructions`; it is not a client-side timer.
+
+```typescript
+const agent = phone.agent({
+  systemPrompt: "You are an order-status assistant.",
+  engine: new OpenAIRealtime2({ apiKey: process.env.OPENAI_API_KEY! }),
+  toolCallPreambles: true, // prepend the built-in "# Preambles" guidance block
+  tools: [
+    {
+      name: "lookup_order",
+      description: "Look up an order by id.",
+      parameters: {
+        type: "object",
+        properties: { orderId: { type: "string" } },
+        required: ["orderId"],
+      },
+      webhookUrl: "https://api.example.com/orders/lookup",
+      // Optional: when toolCallPreambles is on, a tool's `reassurance` string
+      // is also surfaced to the model as a sample preamble phrase for THIS tool.
+      reassurance: "Let me pull up that order.",
+    },
+  ],
+});
+```
+
+| `toolCallPreambles` | Effect |
+|---------------------|--------|
+| `undefined` / `false` (default) | No change to the prompt — instructions stay byte-identical to prior releases. |
+| `true` | Patter prepends the built-in `# Preambles` guidance block (when to speak a preamble, when to stay silent, vary wording, never imply the result). |
+| `string` | Used verbatim as the full preamble block (house-style override). |
+
+<Note>
+  Preambles steer the model through the system prompt; they apply to Realtime modes only. Pipeline mode has its own phone-friendly preamble (see `disablePhonePreamble`). For a fallback that works on non-reasoning models, pair preambles with a tool's `reassurance` filler above.
+</Note>
+
+---
+
+## Retries & circuit breaker
+
+Both handler and webhook tool calls go through the same execution policy:
+
+- **Retries**: up to 3 total attempts (default `maxRetries: 2`).
+- **Backoff**: exponential -- `500 ms × 2^attempt`, jittered up to ~60 ms, capped at 5 s.
+- **Failure response**: after the last attempt the executor returns a structured JSON error so the model can recover gracefully.
+
+  ```json
+  { "error": "Tool failed after 3 attempts: ...", "fallback": true }
+  ```
+
+In addition, `DefaultToolExecutor` keeps a per-tool **circuit breaker** so a flaky downstream doesn't burn LLM tokens on calls that will keep failing.
+
+### State machine
+
+| State | When | Behaviour |
+|-------|------|-----------|
+| `CLOSED` | Default. | Calls run normally; failures count toward the threshold. |
+| `OPEN` | After 5 consecutive failures (default). | Calls short-circuit immediately for 30 s. The model receives `{ error, fallback: true, circuit_state: "open", retry_after_ms }`. |
+| `HALF_OPEN` | First call after the cooldown elapses. | One probe call is allowed. Success transitions to `CLOSED`; failure trips back to `OPEN` for another cooldown. |
+
+When the breaker is `OPEN` the model can recover with a graceful response such as: *"I couldn't reach the booking system right now -- can I take your number and call you back?"*
+
+### Tunables
+
+```typescript
+import { DefaultToolExecutor } from "getpatter";
+
+// Disable the breaker entirely (legacy behaviour).
+const executor = new DefaultToolExecutor({
+  circuitBreaker: { failureThreshold: 0 },
+});
+
+// Tighter — trip after 3 failures, cool down for 60 s.
+const executor = new DefaultToolExecutor({
+  circuitBreaker: {
+    failureThreshold: 3,
+    cooldownMs: 60_000,
+  },
+});
+```
+
+Defaults match the Python SDK byte-for-byte.
+
+---
+
+## OpenAI strict mode (opt-in)
+
+Set `strict: true` on a tool to constrain the model to emit arguments that exactly match the declared schema -- no missing required fields, no extra properties, no type coercion. Recommended for any tool whose handler can't tolerate malformed arguments (DB writes, payments, transfers).
+
+```typescript
+const agent = phone.agent({
+  systemPrompt: "You are a payment assistant.",
+  tools: [
+    {
+      name: "charge_card",
+      description: "Charge the customer's saved card.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          amount_cents: { type: "integer" },
+          currency: { type: "string" },
+          memo: { type: ["string", "null"] }, // nullable, NOT optional
+        },
+        required: ["amount_cents", "currency", "memo"],
+      },
+      handler: chargeCardHandler,
+      strict: true,
+    },
+  ],
+});
+```
+
+When `strict: true`, Patter:
+
+1. Validates the schema satisfies OpenAI's strict-mode requirements at agent build time -- throwing `ToolSchemaError` with the offending path on any violation.
+2. Propagates `strict: true` in the OpenAI Realtime `session.update` wire payload so the model honours it.
+
+### Strict-mode schema rules
+
+<Warning>
+  Strict mode does not allow truly optional fields. Every property in `properties` must also appear in `required`. To express "this field may be absent," use a nullable union type: `{ type: ["string", "null"] }`. The model can then pass `null` instead of omitting the field.
+</Warning>
+
+| Rule | Why |
+|------|-----|
+| Root must be `type: "object"`. | OpenAI function tools require object roots. |
+| Every nested object must set `additionalProperties: false`. | Prevents the model from inventing extra keys. |
+| Every property in `properties` must also be in `required`. | Strict mode has no concept of "optional" -- use nullable types instead. |
+| Arrays' `items` schema is recursively validated under the same rules. | Same guarantees inside lists. |
+
+Default is `strict: false` -- existing tools keep working with no changes.
+
+---
+
+## Adding third-party tools via MCP
+
+If you need to plug in tools from external services -- Google Workspace, GitHub, Postgres, PayPal, and so on -- Patter ships an MCP (Model Context Protocol) client that auto-discovers and wires up remote tool servers without writing wrapper handlers per tool. See [MCP integration](/typescript-sdk/mcp) for the full guide.

@@ -1,0 +1,166 @@
+---
+title: "STT"
+description: "Speech-to-text providers supported by Patter."
+icon: "microphone"
+---
+
+# STT (Speech-to-Text)
+
+STT is used in **pipeline mode** to transcribe caller audio before it reaches your LLM. If you use an [engine](/typescript-sdk/engines) such as `OpenAIRealtime` or `ElevenLabsConvAI`, speech recognition is handled internally by the engine.
+
+Every STT class is imported by name from the package barrel: `import { DeepgramSTT } from "getpatter"`.
+
+## Quickstart
+
+```typescript
+// npx tsx example.ts
+import { Patter, Twilio, DeepgramSTT, ElevenLabsTTS } from "getpatter";
+
+const phone = new Patter({ carrier: new Twilio(), phoneNumber: "+15550001234" });  // TWILIO_* from env
+
+const agent = phone.agent({
+  stt: new DeepgramSTT({ endpointingMs: 80 }),      // DEEPGRAM_API_KEY from env
+  tts: new ElevenLabsTTS({ voiceId: "rachel" }),    // ELEVENLABS_API_KEY from env
+  systemPrompt: "You are a helpful assistant.",
+  firstMessage: "Hi!",
+});
+
+await phone.serve({ agent });
+```
+
+## Supported providers
+
+| Flat import | Namespaced import | Env var |
+|-------------|-------------------|---------|
+| `DeepgramSTT` | `getpatter/stt/deepgram` | `DEEPGRAM_API_KEY` |
+| `WhisperSTT` | `getpatter/stt/whisper` | `OPENAI_API_KEY` |
+| `OpenAITranscribeSTT` | `getpatter/stt/openai-transcribe` | `OPENAI_API_KEY` |
+| `CartesiaSTT` | `getpatter/stt/cartesia` | `CARTESIA_API_KEY` |
+| `AssemblyAISTT` | `getpatter/stt/assemblyai` | `ASSEMBLYAI_API_KEY` |
+| `SonioxSTT` | `getpatter/stt/soniox` | `SONIOX_API_KEY` |
+| `SpeechmaticsSTT` | `getpatter/stt/speechmatics` | `SPEECHMATICS_API_KEY` |
+
+<Note>
+`SpeechmaticsSTT` is being ported to TypeScript in the upcoming release — see the `## Unreleased` section in `CHANGELOG.md`. Use Python or wait for the next minor version.
+</Note>
+
+<Info>
+Speechmatics is supported by the Python SDK but not yet by the TypeScript SDK — use the Python SDK if you need Speechmatics.
+</Info>
+
+### Model enums
+
+Each provider exports a typed const-object of valid model IDs alongside the provider class. They keep `model` options tab-completable and reject typos at construction time, while still accepting raw strings for forward compatibility:
+
+```typescript
+import { DeepgramSTT, DeepgramModel } from "getpatter";
+
+const stt = new DeepgramSTT({ model: DeepgramModel.NOVA_3 });
+```
+
+The same pattern applies to `AssemblyAIModel`, `CartesiaSTTModel`, and `SonioxModel`.
+
+## Deepgram
+
+Streaming STT backed by Deepgram's `nova-3` model.
+
+```typescript
+import { DeepgramSTT } from "getpatter";
+
+const stt = new DeepgramSTT();                                    // reads DEEPGRAM_API_KEY
+const stt = new DeepgramSTT({ apiKey: "dg_...", endpointingMs: 80 });
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `apiKey` | `string` | — | API key — reads from `DEEPGRAM_API_KEY` if omitted. |
+| `language` | `string` | `"en"` | BCP-47 language code. |
+| `model` | `string` | `"nova-3"` | Deepgram model ID. |
+| `encoding` | `string` | `"linear16"` | Audio encoding sent to Deepgram. |
+| `sampleRate` | `number` | `16000` | Sample rate in Hz. |
+| `endpointingMs` | `number` | `150` | Utterance endpointing in milliseconds. |
+| `utteranceEndMs` | `number \| null` | `1000` | Grace period after speech ends. |
+| `smartFormat` | `boolean` | `false` | Smart formatting (numbers, dates, punctuation). Defaults to `false` because telephony agents feed transcripts straight back into an LLM, where smart-format rewrites can confuse downstream tool-call argument parsing. Pass `smartFormat: true` to opt back in. |
+| `interimResults` | `boolean` | `true` | Stream interim transcripts. |
+| `vadEvents` | `boolean` | `true` | Emit VAD start/end markers. |
+
+## Whisper (OpenAI)
+
+HTTP-based STT via OpenAI Whisper. Reuses `OPENAI_API_KEY`.
+
+```typescript
+import { WhisperSTT } from "getpatter";
+
+const stt = new WhisperSTT();                                     // reads OPENAI_API_KEY
+const stt = new WhisperSTT({ apiKey: "sk-...", language: "es" });
+```
+
+<Note>
+Whisper on mulaw 8 kHz routinely hallucinates short fillers (`"you"`, `"."`, `"thank you"`). For production prefer `OpenAITranscribeSTT` (`gpt-4o-transcribe`) — same `OPENAI_API_KEY`, ~10× faster, no hallucination floor.
+</Note>
+
+## OpenAI Transcribe (gpt-4o-transcribe)
+
+First-class STT for OpenAI's `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` models — drop-in replacement for `WhisperSTT` with stronger multilingual quality and significantly lower latency. Reuses `OPENAI_API_KEY`.
+
+```typescript
+import { OpenAITranscribeSTT } from "getpatter";
+
+const stt = new OpenAITranscribeSTT();                                  // reads OPENAI_API_KEY, defaults to gpt-4o-transcribe
+const stt2 = new OpenAITranscribeSTT({ model: "gpt-4o-mini-transcribe" }); // cheaper variant
+const stt3 = new OpenAITranscribeSTT({ apiKey: "sk-...", language: "es" });
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `apiKey` | `string` | — | API key — reads from `OPENAI_API_KEY` if omitted. |
+| `language` | `string` | — | BCP-47 language code. Auto-detect when omitted. |
+| `model` | `string` | `"gpt-4o-transcribe"` | Either `"gpt-4o-transcribe"` or `"gpt-4o-mini-transcribe"`. |
+| `responseFormat` | `string` | `"json"` | Pass `"verbose_json"` to expose segment-level confidence and timestamps. |
+
+## Cartesia
+
+Streaming STT using Cartesia's `ink-whisper`. See [Cartesia setup](/typescript-sdk/providers/cartesia).
+
+```typescript
+import { CartesiaSTT } from "getpatter";
+
+const stt = new CartesiaSTT();                                    // reads CARTESIA_API_KEY
+const stt = new CartesiaSTT({ apiKey: "csk_...", language: "en" });
+```
+
+## AssemblyAI
+
+Universal Streaming STT via the AssemblyAI v3 WebSocket API. See [AssemblyAI setup](/typescript-sdk/providers/assemblyai).
+
+```typescript
+import { AssemblyAISTT } from "getpatter";
+
+const stt = new AssemblyAISTT();                                  // reads ASSEMBLYAI_API_KEY
+```
+
+## Soniox
+
+Real-time STT via Soniox.
+
+```typescript
+import { SonioxSTT } from "getpatter";
+
+const stt = new SonioxSTT();                                      // reads SONIOX_API_KEY
+```
+
+## Missing credentials
+
+Each class throws at construction time if no API key is resolved:
+
+```
+Error: Deepgram STT requires an apiKey. Pass { apiKey: 'dg_...' } or
+set DEEPGRAM_API_KEY in the environment.
+```
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="LLM" icon="brain" href="/typescript-sdk/llm">Configure the language model.</Card>
+  <Card title="TTS" icon="volume" href="/typescript-sdk/tts">Configure speech synthesis.</Card>
+</CardGroup>

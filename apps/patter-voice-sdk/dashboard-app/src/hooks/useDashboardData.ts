@@ -1,0 +1,222 @@
+// Live dashboard state: calls list, aggregates, and SSE stream wiring.
+//
+// Strategy:
+//   1. On mount, fetch the initial snapshot in parallel
+//      (active + recent + aggregates).
+//   2. Open EventSource('/api/dashboard/events') and re-fetch the snapshot
+//      whenever a relevant event arrives.
+//   3. If SSE drops, reconnect with exponential backoff (1s -> 30s, 5
+//      attempts) and then fall back to polling every 5 seconds.
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  fetchActiveCalls,
+  fetchAggregates,
+  fetchCalls,
+  withToken,
+  type Aggregates,
+} from '../lib/api';
+import type { Call } from '../lib/mappers';
+import { mergeCalls, mergeCallPreserving } from './mergeCalls';
+
+export interface DashboardData {
+  readonly calls: Call[];
+  readonly aggregates: Aggregates | null;
+  readonly isStreaming: boolean;
+  readonly error: string | null;
+  readonly refresh: () => Promise<void>;
+  /**
+   * Optimistically remove ``ids`` from the local call list before the next
+   * server refresh lands. Avoids the brief flash of the deleted row
+   * lingering between the DELETE request and the next snapshot fetch.
+   */
+  readonly removeCallsLocal: (ids: readonly string[]) => void;
+}
+
+const RECONNECT_INITIAL_MS = 1_000;
+const RECONNECT_CAP_MS = 30_000;
+const RECONNECT_MAX_ATTEMPTS = 5;
+const POLL_FALLBACK_MS = 5_000;
+
+const RELEVANT_EVENTS = [
+  'call_start',
+  'call_initiated',
+  'call_status',
+  'call_end',
+  'calls_deleted',
+] as const;
+
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return 'Unknown error';
+}
+
+export function useDashboardData(): DashboardData {
+  const [calls, setCalls] = useState<Call[]>([]);
+  const [aggregates, setAggregates] = useState<Aggregates | null>(null);
+  const [isStreaming, setIsStreaming] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const mountedRef = useRef<boolean>(true);
+  // Soft-delete tombstones: ids the operator deleted (locally or — via the
+  // ``calls_deleted`` SSE payload — in ANOTHER tab). ``mergeCallPreserving``
+  // re-appends any prev row missing from the server snapshot, so without
+  // these a deleted call was resurrected forever by the carry-over loop.
+  const deletedIdsRef = useRef<Set<string>>(new Set());
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconnectAttemptsRef = useRef<number>(0);
+
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const clearPollTimer = useCallback(() => {
+    if (pollTimerRef.current !== null) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
+
+  const closeEventSource = useCallback(() => {
+    if (eventSourceRef.current !== null) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  }, []);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      const [active, recent, aggs] = await Promise.all([
+        fetchActiveCalls(),
+        fetchCalls(50, 0),
+        fetchAggregates(),
+      ]);
+      if (!mountedRef.current) return;
+      setCalls((prev) => mergeCallPreserving(prev, mergeCalls(active, recent), deletedIdsRef.current));
+      setAggregates(aggs);
+      setError(null);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setError(describeError(err));
+    }
+  }, []);
+
+  const startPollingFallback = useCallback(() => {
+    if (pollTimerRef.current !== null) return;
+    pollTimerRef.current = setInterval(() => {
+      void refresh();
+    }, POLL_FALLBACK_MS);
+  }, [refresh]);
+
+  // Forward declaration via ref so the SSE setup callback can call itself
+  // recursively for reconnects without a TDZ.
+  const connectRef = useRef<() => void>(() => {});
+
+  const scheduleReconnect = useCallback(() => {
+    clearReconnectTimer();
+    if (reconnectAttemptsRef.current >= RECONNECT_MAX_ATTEMPTS) {
+      startPollingFallback();
+      return;
+    }
+    const attempt = reconnectAttemptsRef.current;
+    const delay = Math.min(
+      RECONNECT_CAP_MS,
+      RECONNECT_INITIAL_MS * Math.pow(2, attempt),
+    );
+    reconnectAttemptsRef.current = attempt + 1;
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      if (!mountedRef.current) return;
+      connectRef.current();
+    }, delay);
+  }, [clearReconnectTimer, startPollingFallback]);
+
+  const handleRelevantEvent = useCallback(() => {
+    void refresh();
+  }, [refresh]);
+
+  const connect = useCallback(() => {
+    closeEventSource();
+    let source: EventSource;
+    try {
+      source = new EventSource(withToken('/api/dashboard/events'));
+    } catch (err) {
+      setError(describeError(err));
+      scheduleReconnect();
+      return;
+    }
+    eventSourceRef.current = source;
+
+    source.onopen = () => {
+      if (!mountedRef.current) return;
+      reconnectAttemptsRef.current = 0;
+      clearPollTimer();
+      setIsStreaming(true);
+    };
+
+    source.onerror = () => {
+      if (!mountedRef.current) return;
+      setIsStreaming(false);
+      closeEventSource();
+      scheduleReconnect();
+    };
+
+    for (const eventName of RELEVANT_EVENTS) {
+      if (eventName === 'calls_deleted') continue; // dedicated handler below
+      source.addEventListener(eventName, handleRelevantEvent);
+    }
+    // ``calls_deleted`` carries the deleted ids — record them as tombstones
+    // BEFORE refreshing so the merge cannot resurrect the rows (this is how
+    // a delete made in another tab propagates here).
+    source.addEventListener('calls_deleted', (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data as string) as {
+          call_ids?: string[];
+        };
+        for (const id of payload.call_ids ?? []) deletedIdsRef.current.add(id);
+      } catch {
+        // Malformed payload — fall through to the refresh below.
+      }
+      handleRelevantEvent();
+    });
+    // turn_complete updates a single call; the simplest correct behaviour is
+    // to re-fetch the snapshot, same as call_status. Per-call fetching for
+    // transcripts lives in useTranscript.
+    source.addEventListener('turn_complete', handleRelevantEvent);
+  }, [closeEventSource, clearPollTimer, handleRelevantEvent, scheduleReconnect]);
+
+  // Keep the latest connect callback reachable from setTimeout callbacks.
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void refresh();
+    connect();
+    return () => {
+      mountedRef.current = false;
+      clearReconnectTimer();
+      clearPollTimer();
+      closeEventSource();
+    };
+    // refresh + connect are stable (useCallback); we want this to run once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const removeCallsLocal = useCallback((ids: readonly string[]): void => {
+    if (ids.length === 0) return;
+    const drop = new Set(ids);
+    // Tombstone locally too: an in-flight refresh that raced the DELETE
+    // could otherwise re-merge the rows right back.
+    for (const id of ids) deletedIdsRef.current.add(id);
+    setCalls((prev) => prev.filter((c) => !drop.has(c.id)));
+  }, []);
+
+  return { calls, aggregates, isStreaming, error, refresh, removeCallsLocal };
+}

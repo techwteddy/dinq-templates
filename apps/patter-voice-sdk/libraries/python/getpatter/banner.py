@@ -1,0 +1,21 @@
+"""Patter installation banner — shows logo + name in terminal."""
+
+import logging
+
+logger = logging.getLogger("getpatter")
+
+BANNER = r"""
+██████╗  █████╗ ████████╗████████╗███████╗██████╗
+██╔══██╗██╔══██╗╚══██╔══╝╚══██╔══╝██╔════╝██╔══██╗
+██████╔╝███████║   ██║      ██║   █████╗  ██████╔╝
+██╔═══╝ ██╔══██║   ██║      ██║   ██╔══╝  ██╔══██╗
+██║     ██║  ██║   ██║      ██║   ███████╗██║  ██║
+╚═╝     ╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═╝
+
+Connect AI agents to phone numbers in 4 lines of code
+"""
+
+
+def show_banner() -> None:
+    """Emit the Patter banner via the package logger at INFO level."""
+    logger.info("\n%s", BANNER)

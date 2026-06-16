@@ -1,0 +1,437 @@
+/**
+ * Per-call filesystem logging for Patter voice agents.
+ *
+ * Opt-in, off by default. Enable by setting ``PATTER_LOG_DIR`` (absolute
+ * path or ``"auto"`` for platform-default) before constructing ``Patter``.
+ * When unset the CallLogger is a no-op — no files are written, no
+ * directories are created.
+ *
+ * Layout:
+ *
+ *   <root>/calls/YYYY/MM/DD/<call_id>/
+ *     metadata.json     envelope written at call start, updated at call end
+ *     transcript.jsonl  one turn per line (role/text/ts/latency/cost)
+ *     events.jsonl      operational events (tool_call, barge_in, error)
+ *
+ * Files are written atomically (tmp + rename) for ``metadata.json``; JSONL
+ * files are append-only. All timestamps are UTC ISO-8601 with millisecond
+ * precision. Phone numbers in ``metadata.json`` are stored RAW by default
+ * (for the dashboard reveal toggle — the log root is user-private); set
+ * ``PATTER_LOG_REDACT_PHONE=mask``/``hash_only`` to redact via
+ * ``maskPhoneNumber``.
+ *
+ * Schema matches ``libraries/python/getpatter/services/call_log.py`` for cross-SDK
+ * compatibility; fields map to OpenTelemetry ``gen_ai.*`` semantic
+ * conventions.
+ *
+ * Environment variables:
+ *
+ * - ``PATTER_LOG_DIR``             root directory or ``"auto"``
+ * - ``PATTER_LOG_RETENTION_DAYS``  auto-cleanup threshold (default ``30``;
+ *                                  ``0`` = keep forever)
+ * - ``PATTER_LOG_REDACT_PHONE``    ``full`` (default) | ``mask`` | ``hash_only``
+ */
+
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import { promises as fsp } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { getLogger } from '../logger';
+import { sanitizeLogValue, maskPhoneNumber } from '../stream-handler';
+
+/** Schema version embedded in every metadata/turn/event record. */
+export const SCHEMA_VERSION = '1.0';
+/** Default `PATTER_LOG_RETENTION_DAYS` when the env var is unset. */
+export const DEFAULT_RETENTION_DAYS = 30;
+
+/** Phone-number redaction mode controlled by `PATTER_LOG_REDACT_PHONE`. */
+export type RedactMode = 'full' | 'mask' | 'hash_only';
+
+// --- Paths ---------------------------------------------------------------
+
+function xdgDataHome(): string {
+  return process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+}
+
+function platformDefaultRoot(): string {
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'patter');
+  }
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (localAppData) return path.join(localAppData, 'patter');
+    return path.join(os.homedir(), 'AppData', 'Local', 'patter');
+  }
+  return path.join(xdgDataHome(), 'patter');
+}
+
+/**
+ * Resolve the log root directory, or ``null`` if logging is disabled.
+ *
+ * Precedence:
+ *   1. ``explicit`` argument
+ *   2. ``PATTER_LOG_DIR`` env var (``"auto"`` → platform default)
+ *   3. disabled (return ``null``)
+ */
+export function resolveLogRoot(explicit?: string | null): string | null {
+  const value = explicit ?? process.env.PATTER_LOG_DIR;
+  if (!value) return null;
+  if (value.trim().toLowerCase() === 'auto') return platformDefaultRoot();
+  if (value.startsWith('~')) return path.join(os.homedir(), value.slice(1));
+  return value;
+}
+
+function retentionDays(): number {
+  const raw = process.env.PATTER_LOG_RETENTION_DAYS;
+  if (raw === undefined) return DEFAULT_RETENTION_DAYS;
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed)) return DEFAULT_RETENTION_DAYS;
+  return Math.max(0, parsed);
+}
+
+function redactMode(): RedactMode {
+  // Default ``full`` (changed from ``mask`` on 2026-05-21): the dashboard
+  // UI's reveal toggle (``revealed=true`` in ``format.ts:fmtPhone``) cannot
+  // reconstruct a raw number once the persisted record has already been
+  // masked, so storing raw on disk is required for the toggle to actually
+  // work. The on-disk path (platform user data dir) is user-private.
+  // Override with ``PATTER_LOG_REDACT_PHONE=mask`` for setups that ship
+  // logs off-host.
+  const raw = (process.env.PATTER_LOG_REDACT_PHONE || 'full').trim().toLowerCase();
+  if (raw === 'full' || raw === 'mask' || raw === 'hash_only') return raw;
+  return 'full';
+}
+
+function redactPhone(raw: string): string {
+  if (!raw) return '';
+  const mode = redactMode();
+  if (mode === 'full') return raw;
+  if (mode === 'hash_only') {
+    return 'sha256:' + crypto.createHash('sha256').update(raw, 'utf8').digest('hex').slice(0, 16);
+  }
+  return maskPhoneNumber(raw);
+}
+
+/** RFC 3339 / ISO 8601 UTC timestamp with millisecond precision. */
+function utcIso(tsSeconds?: number): string {
+  const ms = tsSeconds !== undefined ? tsSeconds * 1000 : Date.now();
+  return new Date(ms).toISOString();
+}
+
+// --- IO helpers ----------------------------------------------------------
+
+async function atomicWriteJson(filePath: string, payload: unknown): Promise<void> {
+  const dir = path.dirname(filePath);
+  await fsp.mkdir(dir, { recursive: true });
+  const tmp = path.join(dir, `.tmp.${process.pid}.${crypto.randomBytes(4).toString('hex')}.json`);
+  try {
+    const handle = await fsp.open(tmp, 'w');
+    try {
+      await handle.writeFile(JSON.stringify(payload, null, 2) + '\n', { encoding: 'utf8' });
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fsp.rename(tmp, filePath);
+  } catch (err) {
+    try {
+      await fsp.unlink(tmp);
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
+}
+
+async function appendJsonl(filePath: string, record: unknown): Promise<void> {
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  await fsp.appendFile(filePath, JSON.stringify(record) + '\n', { encoding: 'utf8' });
+}
+
+// --- Types ---------------------------------------------------------------
+
+/** Fields written to `metadata.json` when a call starts. */
+export interface CallStartInput {
+  readonly caller?: string;
+  readonly callee?: string;
+  readonly direction?: string;
+  readonly telephonyProvider?: string;
+  readonly providerMode?: string;
+  readonly agent?: Record<string, unknown>;
+  readonly traceId?: string | null;
+}
+
+/** Fields merged into `metadata.json` when a call ends. */
+export interface CallEndInput {
+  readonly durationSeconds?: number;
+  readonly turns?: number;
+  readonly cost?: Record<string, unknown> | null;
+  readonly latency?: Record<string, unknown> | null;
+  readonly status?: string;
+  readonly error?: string | null;
+  /**
+   * Path of the local recording WAV when `localRecording` was active for
+   * the call. Persisted as an extra `recording_path` field; omitted
+   * entirely otherwise so existing metadata shapes are unchanged.
+   */
+  readonly recordingPath?: string | null;
+}
+
+/** Single turn record appended to `transcript.jsonl`. */
+export interface CallTurnRecord {
+  readonly timestamp?: number;
+  readonly [key: string]: unknown;
+}
+
+// --- CallLogger ----------------------------------------------------------
+
+/**
+ * Per-call filesystem logger.
+ *
+ * Instantiate once per server (or pass ``null`` to disable). All methods
+ * degrade gracefully: errors during file writes are logged but never
+ * raised to the caller — logging must not take down a live phone call.
+ */
+export class CallLogger {
+  private readonly root: string | null;
+
+  constructor(root: string | null | undefined) {
+    if (!root) {
+      this.root = null;
+      return;
+    }
+    const resolved = root.startsWith('~') ? path.join(os.homedir(), root.slice(1)) : root;
+    try {
+      fs.mkdirSync(resolved, { recursive: true });
+      this.root = resolved;
+      getLogger().info(`Call logs: ${resolved}`);
+    } catch (err) {
+      getLogger().warn(
+        `Could not create call log root ${resolved}: ${sanitizeLogValue(String(err))}`,
+      );
+      this.root = null;
+    }
+  }
+
+  /** True when a log root was configured and is writable. */
+  get enabled(): boolean {
+    return this.root !== null;
+  }
+
+  /**
+   * Per-call directory for ``callId`` (created lazily by the write paths),
+   * or ``null`` when logging is disabled. Public so call artifacts written
+   * by other components — e.g. the local recording WAV — land next to
+   * ``metadata.json``. Mirrors Python ``CallLogger.call_dir``.
+   */
+  callDir(callId: string, startedAtSeconds?: number): string | null {
+    if (this.root === null) return null;
+    const ms = startedAtSeconds !== undefined ? startedAtSeconds * 1000 : Date.now();
+    const dt = new Date(ms);
+    const year = String(dt.getUTCFullYear()).padStart(4, '0');
+    const month = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(dt.getUTCDate()).padStart(2, '0');
+    const safeId = sanitizeLogValue(callId, 64).replace(/\//g, '_') || 'unknown';
+    return path.join(this.root, 'calls', year, month, day, safeId);
+  }
+
+  /**
+   * Per-call start time so every artefact lands in the START day's
+   * directory. Re-deriving the day from Date.now() split calls crossing
+   * midnight UTC across two directories: the original metadata stayed
+   * "in_progress" forever and the dashboard hydrate resurrected it as a
+   * phantom live call. Mirrors Python's ``_started_at`` map.
+   */
+  private readonly startedAt = new Map<string, number>();
+
+  /** Write the initial `metadata.json` for a new call. */
+  async logCallStart(callId: string, input: CallStartInput = {}): Promise<void> {
+    if (!this.enabled) return;
+    const startedAt = Date.now() / 1000;
+    this.startedAt.set(callId, startedAt);
+    const dir = this.callDir(callId, startedAt);
+    if (dir === null) return;
+    const metadata = {
+      schema_version: SCHEMA_VERSION,
+      call_id: callId,
+      trace_id: input.traceId ?? null,
+      started_at: utcIso(startedAt),
+      ended_at: null,
+      duration_ms: null,
+      status: 'in_progress',
+      caller: redactPhone(input.caller ?? ''),
+      callee: redactPhone(input.callee ?? ''),
+      direction: input.direction || 'inbound',
+      telephony_provider: input.telephonyProvider ?? '',
+      provider_mode: input.providerMode ?? '',
+      agent: input.agent ?? {},
+      turns: 0,
+      cost: null,
+      latency: null,
+      error: null,
+    };
+    try {
+      await atomicWriteJson(path.join(dir, 'metadata.json'), metadata);
+    } catch (err) {
+      getLogger().warn(`call_log write failed (${sanitizeLogValue(callId)}): ${sanitizeLogValue(String(err))}`);
+    }
+    // Sample-based sweep (~2%) so we don't need a daemon.
+    if (crypto.randomBytes(1)[0] < 5) {
+      void this.sweepOldDays().catch((e) =>
+        getLogger().debug(`call_log sweep failed: ${sanitizeLogValue(String(e))}`),
+      );
+    }
+  }
+
+  /** Append a single turn record to the call's `transcript.jsonl`. */
+  async logTurn(callId: string, turn: CallTurnRecord): Promise<void> {
+    if (!this.enabled) return;
+    const dir = this.callDir(callId, this.startedAt.get(callId));
+    if (dir === null) return;
+    const record = {
+      schema_version: SCHEMA_VERSION,
+      ts: utcIso(typeof turn.timestamp === 'number' ? turn.timestamp : undefined),
+      ...turn,
+    };
+    try {
+      await appendJsonl(path.join(dir, 'transcript.jsonl'), record);
+    } catch (err) {
+      getLogger().warn(
+        `call_log turn write failed (${sanitizeLogValue(callId)}): ${sanitizeLogValue(String(err))}`,
+      );
+    }
+  }
+
+  /** Append an operational event (tool_call, barge_in, error, …) to `events.jsonl`. */
+  async logEvent(callId: string, eventType: string, payload: Record<string, unknown> = {}): Promise<void> {
+    if (!this.enabled) return;
+    const dir = this.callDir(callId, this.startedAt.get(callId));
+    if (dir === null) return;
+    const record = {
+      schema_version: SCHEMA_VERSION,
+      ts: utcIso(),
+      type: eventType,
+      data: payload,
+    };
+    try {
+      await appendJsonl(path.join(dir, 'events.jsonl'), record);
+    } catch (err) {
+      getLogger().warn(
+        `call_log event write failed (${sanitizeLogValue(callId)}): ${sanitizeLogValue(String(err))}`,
+      );
+    }
+  }
+
+  /** Merge end-of-call fields into the existing `metadata.json`. */
+  async logCallEnd(callId: string, input: CallEndInput = {}): Promise<void> {
+    if (!this.enabled) return;
+    const dir = this.callDir(callId, this.startedAt.get(callId));
+    if (dir === null) return;
+    const metadataPath = path.join(dir, 'metadata.json');
+    let existing: Record<string, unknown> = {};
+    try {
+      existing = JSON.parse(await fsp.readFile(metadataPath, 'utf8')) as Record<string, unknown>;
+    } catch {
+      existing = {
+        schema_version: SCHEMA_VERSION,
+        call_id: callId,
+        started_at: null,
+      };
+    }
+    const merged = {
+      ...existing,
+      ended_at: utcIso(),
+      duration_ms:
+        input.durationSeconds !== undefined
+          ? Math.round(input.durationSeconds * 1000 * 10) / 10
+          : null,
+      status: input.status ?? 'completed',
+      turns: input.turns ?? null,
+      cost: input.cost ?? null,
+      latency: input.latency ?? null,
+      error: input.error ?? null,
+      ...(input.recordingPath != null ? { recording_path: input.recordingPath } : {}),
+    };
+    try {
+      await atomicWriteJson(metadataPath, merged);
+    } catch (err) {
+      getLogger().warn(
+        `call_log finalize failed (${sanitizeLogValue(callId)}): ${sanitizeLogValue(String(err))}`,
+      );
+    }
+    this.startedAt.delete(callId);
+  }
+
+
+  // --- Retention ---------------------------------------------------------
+
+  private async sweepOldDays(): Promise<void> {
+    if (this.root === null) return;
+    const days = retentionDays();
+    if (days === 0) return;
+    const cutoff = Date.now() / 1000 - days * 86400;
+    const callsRoot = path.join(this.root, 'calls');
+    try {
+      await fsp.access(callsRoot);
+    } catch {
+      return;
+    }
+    try {
+      for (const yearName of await fsp.readdir(callsRoot)) {
+        if (!/^\d+$/.test(yearName)) continue;
+        const yearDir = path.join(callsRoot, yearName);
+        if (!(await fsp.stat(yearDir)).isDirectory()) continue;
+        for (const monthName of await fsp.readdir(yearDir)) {
+          if (!/^\d+$/.test(monthName)) continue;
+          const monthDir = path.join(yearDir, monthName);
+          if (!(await fsp.stat(monthDir)).isDirectory()) continue;
+          for (const dayName of await fsp.readdir(monthDir)) {
+            if (!/^\d+$/.test(dayName)) continue;
+            const dayDir = path.join(monthDir, dayName);
+            const y = Number.parseInt(yearName, 10);
+            const m = Number.parseInt(monthName, 10);
+            const d = Number.parseInt(dayName, 10);
+            const ts = Date.UTC(y, m - 1, d) / 1000;
+            if (ts < cutoff) {
+              await rmTreeAsync(dayDir);
+            }
+          }
+          try {
+            if ((await fsp.readdir(monthDir)).length === 0) await fsp.rmdir(monthDir);
+          } catch {
+            // ignore
+          }
+        }
+        try {
+          if ((await fsp.readdir(yearDir)).length === 0) await fsp.rmdir(yearDir);
+        } catch {
+          // ignore
+        }
+      }
+    } catch (err) {
+      getLogger().debug(`call_log sweep failed: ${sanitizeLogValue(String(err))}`);
+    }
+  }
+}
+
+async function rmTreeAsync(target: string): Promise<void> {
+  try {
+    for (const child of await fsp.readdir(target)) {
+      const childPath = path.join(target, child);
+      const stat = await fsp.lstat(childPath);
+      if (stat.isDirectory()) {
+        await rmTreeAsync(childPath);
+      } else {
+        try {
+          await fsp.unlink(childPath);
+        } catch {
+          // ignore
+        }
+      }
+    }
+    await fsp.rmdir(target);
+  } catch {
+    // ignore
+  }
+}

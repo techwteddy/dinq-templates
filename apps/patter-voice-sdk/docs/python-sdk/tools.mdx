@@ -1,0 +1,663 @@
+---
+title: "Tools & Function Calling"
+description: "Let your voice agent call APIs, query databases, and take actions during a conversation."
+icon: "wrench"
+---
+
+# Tools & Function Calling
+
+Tools let your voice agent perform actions during a conversation -- check a database, call an API, transfer a call, or anything else you can expose via a webhook or an in-process handler.
+
+## Defining Tools
+
+Each tool is a dictionary with the following fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `str` | Yes | Unique identifier for the tool. |
+| `description` | `str` | Yes | Natural language description of what the tool does. The AI uses this to decide when to call it. |
+| `parameters` | `dict` | Yes | JSON Schema defining the tool's input parameters. |
+| `webhook_url` | `str` | One of `webhook_url` or `handler` | URL that Patter POSTs to when the AI invokes this tool. |
+| `handler` | `Callable` | One of `webhook_url` or `handler` | Async or sync callable `(arguments, context) -> str | dict`. Runs in-process instead of making an HTTP call. |
+| `timeout_s` | `float \| None` | No | Per-tool execution timeout in seconds (default `None` → 10 s). Raise for long browser-automation / external-API tools. See [Per-tool timeout](#per-tool-timeout). |
+| `reassurance` | `str \| dict \| None` | No | Realtime-mode filler the agent speaks while the tool runs. See [Reassurance during long tool calls](#reassurance-during-long-tool-calls). |
+
+<Note>
+  Every tool must have either a `webhook_url` or a `handler`. Providing neither raises a `ValueError`.
+</Note>
+
+```python
+agent = phone.agent(
+    system_prompt="You are a restaurant reservation assistant.",
+    tools=[
+        {
+            "name": "check_availability",
+            "description": "Check if a table is available for a given date, time, and party size.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "Reservation date in YYYY-MM-DD format",
+                    },
+                    "time": {
+                        "type": "string",
+                        "description": "Reservation time in HH:MM format",
+                    },
+                    "party_size": {
+                        "type": "integer",
+                        "description": "Number of guests",
+                    },
+                },
+                "required": ["date", "time", "party_size"],
+            },
+            "webhook_url": "https://api.example.com/reservations/check",
+        },
+        {
+            "name": "make_reservation",
+            "description": "Book a table reservation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string"},
+                    "time": {"type": "string"},
+                    "party_size": {"type": "integer"},
+                    "customer_name": {"type": "string"},
+                    "phone": {"type": "string"},
+                },
+                "required": ["date", "time", "party_size", "customer_name"],
+            },
+            "webhook_url": "https://api.example.com/reservations/create",
+        },
+    ],
+)
+```
+
+## Webhook Request Format
+
+When the AI decides to call a tool, Patter sends an HTTP POST to the `webhook_url` with the following JSON body:
+
+```json
+{
+  "tool": "check_availability",
+  "arguments": {
+    "date": "2025-03-15",
+    "time": "19:00",
+    "party_size": 4
+  },
+  "call_id": "call_abc123",
+  "caller": "+15550001234",
+  "callee": "+15550009876",
+  "attempt": 1
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool` | `str` | The name of the tool being invoked. |
+| `arguments` | `dict` | The arguments extracted by the AI, matching the JSON Schema. |
+| `call_id` | `str` | Unique identifier for the current call. |
+| `caller` | `str` | The caller's phone number. |
+| `callee` | `str` | The callee's phone number. |
+| `attempt` | `int` | Attempt number (1, 2, or 3). |
+
+## Webhook Response
+
+Your webhook must return valid JSON. The response is passed back to the AI as the tool result:
+
+```json
+{
+  "available": true,
+  "tables": [
+    {"id": "T5", "seats": 4, "location": "patio"},
+    {"id": "T12", "seats": 6, "location": "main"}
+  ]
+}
+```
+
+### Response Requirements
+
+| Constraint | Value |
+|------------|-------|
+| Content type | `application/json` |
+| Max response size | 1 MB |
+| Timeout | 10 seconds |
+
+### Retry Behavior
+
+If your webhook fails (non-2xx status code or network error), Patter retries automatically. Same exponential-backoff policy applies to in-process handlers — see [Retries & circuit breaker](#retries--circuit-breaker) below.
+
+---
+
+## System Tools
+
+Patter automatically injects two system tools into every agent. You do not need to define these -- they are always available.
+
+### transfer_call
+
+Transfers the current call to another phone number. The AI decides when to trigger this based on the conversation context.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `number` | `str` | Phone number to transfer to (E.164 format). |
+| `mode` | `str` | Optional. `"cold"` (default) redirects the caller immediately — the historical blind transfer. `"warm"` puts the caller on hold music, dials the human agent, speaks the `summary` to them, then bridges everyone together. Warm mode is implemented on **Twilio** today; Telnyx and Plivo return a clear error envelope (the AI keeps the call) instead of silently falling back to a blind redirect. |
+| `summary` | `str` | Optional, warm mode only. One or two sentences announced to the human agent before the caller is bridged (who is calling and what they need). |
+
+The AI might say: *"Let me transfer you to our billing department."* and then invoke `transfer_call` with the appropriate number.
+
+Warm transfers are also available programmatically: `await control.transfer("+1555...", mode="warm", summary="Mario needs help with order 12.")`.
+
+### end_call
+
+Ends the current call programmatically.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `reason` | `str` | Reason for ending the call (logged in the transcript). |
+
+### handoff_to
+
+Injected **only** when the agent is built with `handoffs={...}` — a registry of named target agents:
+
+```python
+billing = phone.agent(system_prompt="You are the billing specialist.", engine=engine, tools=[...])
+triage = phone.agent(
+    system_prompt="You answer first and route the caller.",
+    engine=engine,
+    handoffs={"billing": billing},
+)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | `str` | Name of the target agent (schema-constrained to the configured registry keys). |
+| `reason` | `str` | Optional. Brief reason for the handoff (recorded in the transcript). |
+
+Calling it swaps the **live call** to the target agent's system prompt, tools, variables, guardrails, and onward `handoffs` — conversation history is preserved and a `[handoff]` system line is recorded in the transcript. Works in Realtime mode (via a mid-session `session.update`) and Pipeline mode (the next LLM turn runs as the target agent). Audio infrastructure established at call start (STT/TTS/engine connection — and therefore the voice on engines that cannot switch voice mid-session) is retained. Unknown names return an error envelope to the model, never silence.
+
+---
+
+## Using tool()
+
+The `tool()` static method provides a convenient way to create tool definitions:
+
+```python
+agent = phone.agent(
+    system_prompt="You are a helpful assistant.",
+    tools=[
+        tool(
+            name="get_order_status",
+            description="Look up an order by ID.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string", "description": "Order ID"},
+                },
+                "required": ["order_id"],
+            },
+            webhook_url="https://api.example.com/orders/status",
+        ),
+    ],
+)
+```
+
+## In-Process Handlers
+
+Instead of webhook URLs, you can pass a Python callable that runs in-process. This is useful for tools that query local databases, call internal APIs, or perform any logic without an external HTTP endpoint.
+
+```python
+async def check_inventory(arguments, context):
+    product_id = arguments["product_id"]
+    # Your custom logic here
+    stock = await db.get_stock(product_id)
+    return {"product_id": product_id, "in_stock": stock > 0, "quantity": stock}
+
+agent = phone.agent(
+    system_prompt="You are a product specialist.",
+    tools=[
+        tool(
+            name="check_inventory",
+            description="Check if a product is in stock.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "product_id": {"type": "string", "description": "Product ID"},
+                },
+                "required": ["product_id"],
+            },
+            handler=check_inventory,
+        ),
+    ],
+)
+```
+
+The handler receives two arguments:
+- `arguments` — A dict of the arguments extracted by the AI
+- `context` — A dict with call metadata (`call_id`, `caller`, `callee`)
+
+The handler must return a `str` or `dict`. Dict values are serialized to JSON before being passed to the AI.
+
+---
+
+## Tool Design Tips
+
+<Accordion title="Write clear descriptions">
+The AI uses the `description` field to decide when to call a tool. Be specific:
+
+```python
+# Good
+"description": "Look up the customer's order status by order ID. Returns tracking number and estimated delivery date."
+
+# Bad
+"description": "Check order."
+```
+</Accordion>
+
+<Accordion title="Use descriptive parameter names">
+Parameter names and descriptions help the AI extract the right values from the conversation:
+
+```python
+"properties": {
+    "order_id": {
+        "type": "string",
+        "description": "The order ID, usually starts with 'ORD-' followed by 6 digits",
+    },
+}
+```
+</Accordion>
+
+<Accordion title="Keep responses concise">
+The AI processes the full JSON response. Large responses add latency. Return only what the AI needs to continue the conversation.
+</Accordion>
+
+---
+
+## Schema validation at build time
+
+Patter structurally validates every tool's `parameters` schema the moment you call `phone.agent(tools=[...])`. Typos that previously failed silently mid-call (`required: "name"` instead of `required: ["name"]`) now raise `ToolSchemaError` immediately, naming the offending tool.
+
+The validator checks:
+
+- The root must be `type: "object"`.
+- `properties` must be a dict mapping field name to JSON Schema.
+- `required` must be a list of strings.
+- Every entry in `required` must exist in `properties`.
+
+```python
+from getpatter import Patter, Tool
+from getpatter.tools.schema_validation import ToolSchemaError
+
+try:
+    agent = phone.agent(
+        system_prompt="...",
+        tools=[
+            Tool(
+                name="lookup_order",
+                description="Find an order.",
+                parameters={
+                    "type": "object",
+                    "properties": {"order_id": {"type": "string"}},
+                    "required": "order_id",  # bug: should be a list
+                },
+                webhook_url="https://api.example.com/orders",
+            ),
+        ],
+    )
+except ToolSchemaError as e:
+    print(e)
+    # tool 'lookup_order': `parameters['required']` must be a list of field names.
+```
+
+<Note>
+  Validation lives in `getpatter.tools.schema_validation` and runs once per tool at agent build time. There is no runtime overhead per call.
+</Note>
+
+---
+
+## Streaming progress from long-running tools
+
+Realtime mode only. When a tool takes more than a moment to run -- a database query, a multi-step API workflow, a file generation -- you can write the handler as an `async` generator and `yield` `{"progress": "..."}` updates while it works. Each progress message is spoken inline by the agent so the caller hears live status instead of dead air.
+
+The generator's final `{"result": "..."}` yield becomes the function-call result the model sees.
+
+```python
+from getpatter import Patter, Tool
+
+async def search_database(arguments, context):
+    yield {"progress": "Searching the database..."}
+    rows = await db.search(arguments["query"])
+
+    yield {"progress": f"Found {len(rows)} matches, ranking now..."}
+    ranked = await rank(rows)
+
+    yield {"result": json.dumps({"top_results": ranked[:5]})}
+
+agent = phone.agent(
+    system_prompt="You help customers find products.",
+    tools=[
+        Tool(
+            name="search_products",
+            description="Search the product catalogue.",
+            parameters={
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+            handler=search_database,
+        ),
+    ],
+)
+```
+
+<Note>
+  Plain `async def` handlers continue to work unchanged -- streaming is purely opt-in by switching to a generator. Pipeline mode silently discards `progress` yields for now and uses only the final result; Realtime mode is fully supported.
+</Note>
+
+<Warning>
+  Async generators in Python don't surface `return` values cleanly across the iterator boundary. The agreed protocol is to `yield {"result": "..."}` as the **final** yield. Anything yielded after a `result` is ignored.
+</Warning>
+
+---
+
+## Reassurance during long tool calls
+
+Realtime mode only. Even with progress streaming, some tools take a beat before they have anything useful to say. The `reassurance` field on `Tool` lets you set a single filler line the agent will speak if the tool hasn't returned within a grace window (default 1.5 s). If the tool returns earlier, the timer is cancelled and the line is never spoken.
+
+```python
+from getpatter import Patter, Tool
+
+agent = phone.agent(
+    system_prompt="You are a booking assistant.",
+    tools=[
+        # String shorthand — fires after the default 1500 ms.
+        Tool(
+            name="check_availability",
+            description="Check open appointment slots.",
+            parameters={
+                "type": "object",
+                "properties": {"date": {"type": "string"}},
+                "required": ["date"],
+            },
+            webhook_url="https://api.example.com/availability",
+            reassurance="Let me check the calendar for you...",
+        ),
+
+        # Dict form — explicit grace window.
+        Tool(
+            name="run_credit_check",
+            description="Run a credit check.",
+            parameters={
+                "type": "object",
+                "properties": {"ssn": {"type": "string"}},
+                "required": ["ssn"],
+            },
+            handler=credit_check_handler,
+            reassurance={
+                "message": "One moment while I pull that up — this can take a few seconds.",
+                "after_ms": 800,
+            },
+        ),
+    ],
+)
+```
+
+<Note>
+  Pipeline mode silently skips reassurance for now -- there is no clean injection point mid-turn. If you need it for a Pipeline agent, prefer an async-generator handler with a first `{"progress": ...}` yield.
+</Note>
+
+`reassurance` is also accepted by the `tool()` factory, so you can set it inline next to a per-tool `timeout_s` (see below) — `tool(name=..., handler=..., timeout_s=60.0, reassurance="One moment while I check that for you.")`.
+
+<Note>
+  The reassurance filler is spoken as the **agent's own line**, not as a fake caller turn. (Earlier builds injected the filler as a `role:"user"` conversation item, which made the transcript falsely show the caller saying "One moment." and could confuse the model. The filler now uses a dedicated assistant-attributed path.)
+</Note>
+
+For a more natural alternative on `gpt-realtime-2`, see [tool-call preambles](#tool-call-preambles) below — the model improvises its own short "let me check" line before the call instead of you scripting one per tool.
+
+---
+
+## Tool-call preambles
+
+Realtime modes only. On a reasoning Realtime model the cleanest way to bridge the silence before a slow tool call is to let the model **say what it's about to do, in its own voice** — "I'll check that order now." — rather than scripting a per-tool [`reassurance`](#reassurance-during-long-tool-calls) line. Set `tool_call_preambles=True` on the agent and Patter prepends a native `# Preambles` guidance block to the Realtime session instructions:
+
+```python
+from getpatter import OpenAIRealtime2, Patter
+
+agent = phone.agent(
+    system_prompt="You are a customer-support agent.",
+    engine=OpenAIRealtime2(),          # most effective on gpt-realtime-2
+    tools=[check_order_tool, lookup_account_tool],
+    tool_call_preambles=True,          # opt-in; default False = no prompt change
+)
+```
+
+The built-in block steers the model to:
+
+- speak **one short sentence** describing the action before a tool call that may take a moment (e.g. "I'll look up your appointment details.");
+- **vary the wording** across turns;
+- **skip** the preamble when it can answer immediately;
+- **never imply** success or failure before the tool returns.
+
+`tool_call_preambles` accepts three forms:
+
+| Value | Effect |
+| --- | --- |
+| `False` (default) | No change — `system_prompt` ships verbatim. |
+| `True` | Patter prepends the built-in `# Preambles` block. |
+| `str` | The string is used **verbatim** as the full block (override). |
+
+When a tool also carries a [`reassurance`](#reassurance-during-long-tool-calls) string, that phrase is surfaced to the model as a sample preamble in the tool's description, so your tone hints carry over.
+
+<Note>
+  Preambles are most effective on `gpt-realtime-2`, where they are a first-class default-on behaviour; the guidance block reinforces *when* to use one. This is a Realtime-modes knob — pipeline mode already prepends its own phone preamble and is unaffected.
+</Note>
+
+---
+
+## Per-tool timeout
+
+By default a tool call is aborted after **10 seconds**. Long browser-automation or external-API tools legitimately run 30-60 seconds — without a higher timeout they would be cut short and the model would receive a timeout error mid-call. Set `timeout_s` per tool to raise the ceiling:
+
+```python
+from getpatter import Patter, tool
+
+agent = phone.agent(
+    system_prompt="You are a research assistant.",
+    tools=[
+        tool(
+            name="run_browser_task",
+            description="Drive a headless browser to complete a multi-step task.",
+            parameters={
+                "type": "object",
+                "properties": {"task": {"type": "string"}},
+                "required": ["task"],
+            },
+            handler=browser_handler,
+            timeout_s=60.0,                       # allow up to 60s (was 10s)
+            reassurance="One moment while I check that for you.",
+        ),
+    ],
+)
+```
+
+- Applies to **both** the handler path and the webhook path.
+- `None` (default) keeps the existing 10 s behaviour — no change for tools that don't opt in.
+- Clamped to a **300 s** ceiling so a hung tool can't hold the turn forever.
+- A timeout is **terminal** — it is not retried (retrying would multiply the wait). The model receives `{"error": "...timed out...", "fallback": true}` so it can recover gracefully (e.g. "that's taking longer than expected, let me take your number and call you back").
+
+<Note>
+  The per-tool timeout governs **tool execution** only and is independent of the LLM provider's own stream ceiling.
+
+  The carrier media stream stays open across a long tool call — Twilio keeps the `<Connect><Stream>` WebSocket up for the whole call lifetime and keeps sending inbound media every ~20 ms even during silence, so a 30-60 s tool does **not** drop the leg. Pair `timeout_s` with `reassurance` (Realtime mode) so the filler keeps audio flowing and the line doesn't sound dead while the tool runs. The per-tool timeout — not the carrier — is what bounds a hung tool.
+</Note>
+
+---
+
+## Retries & circuit breaker
+
+Both handler and webhook tool calls go through the same execution policy:
+
+- **Retries**: up to 3 total attempts (default `MAX_RETRIES = 2`).
+- **Backoff**: exponential -- `500 ms × 2^attempt`, jittered up to ~60 ms, capped at 5 s.
+- **Failure response**: after the last attempt the executor returns a structured JSON error so the model can recover gracefully.
+
+  ```json
+  {"error": "Tool failed after 3 attempts: ...", "fallback": true}
+  ```
+
+In addition, `ToolExecutor` keeps a per-tool **circuit breaker** so a flaky downstream doesn't burn LLM tokens on calls that will keep failing.
+
+### State machine
+
+| State | When | Behaviour |
+|-------|------|-----------|
+| `CLOSED` | Default. | Calls run normally; failures count toward the threshold. |
+| `OPEN` | After 5 consecutive failures (default). | Calls short-circuit immediately for 30 s. The model receives `{"error": ..., "fallback": true, "circuit_state": "open", "retry_after_ms": ...}`. |
+| `HALF_OPEN` | First call after the cooldown elapses. | One probe call is allowed. Success transitions to `CLOSED`; failure trips back to `OPEN` for another cooldown. |
+
+When the breaker is `OPEN` the model can recover with a graceful response such as: *"I couldn't reach the booking system right now -- can I take your number and call you back?"*
+
+### Tunables
+
+```python
+from getpatter.tools.circuit_breaker import CircuitBreakerOptions
+from getpatter.tools.tool_executor import ToolExecutor
+
+# Disable the breaker entirely (legacy behaviour).
+executor = ToolExecutor(
+    circuit_breaker=CircuitBreakerOptions(failure_threshold=0),
+)
+
+# Tighter -- trip after 3 failures, cool down for 60 s.
+executor = ToolExecutor(
+    circuit_breaker=CircuitBreakerOptions(
+        failure_threshold=3,
+        cooldown_s=60.0,
+    ),
+)
+```
+
+Defaults match the TypeScript SDK byte-for-byte.
+
+---
+
+## OpenAI strict mode (opt-in)
+
+Set `strict=True` on a tool to constrain the model to emit arguments that exactly match the declared schema -- no missing required fields, no extra properties, no type coercion. Recommended for any tool whose handler can't tolerate malformed arguments (DB writes, payments, transfers).
+
+```python
+from getpatter import Patter, Tool
+
+agent = phone.agent(
+    system_prompt="You are a payment assistant.",
+    tools=[
+        Tool(
+            name="charge_card",
+            description="Charge the customer's saved card.",
+            parameters={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "amount_cents": {"type": "integer"},
+                    "currency": {"type": "string"},
+                    "memo": {"type": ["string", "null"]},  # nullable, NOT optional
+                },
+                "required": ["amount_cents", "currency", "memo"],
+            },
+            handler=charge_card_handler,
+            strict=True,
+        ),
+    ],
+)
+```
+
+When `strict=True`, Patter:
+
+1. Validates the schema satisfies OpenAI's strict-mode requirements at agent build time -- raising `ToolSchemaError` with the offending path on any violation.
+2. Propagates `strict: true` in the OpenAI Realtime `session.update` wire payload so the model honours it.
+
+### Strict-mode schema rules
+
+<Warning>
+  Strict mode does not allow truly optional fields. Every property in `properties` must also appear in `required`. To express "this field may be absent," use a nullable union type: `{"type": ["string", "null"]}`. The model can then pass `null` instead of omitting the field.
+</Warning>
+
+| Rule | Why |
+|------|-----|
+| Root must be `type: "object"`. | OpenAI function tools require object roots. |
+| Every nested object must set `additionalProperties: False`. | Prevents the model from inventing extra keys. |
+| Every property in `properties` must also be in `required`. | Strict mode has no concept of "optional" -- use nullable types instead. |
+| Arrays' `items` schema is recursively validated under the same rules. | Same guarantees inside lists. |
+
+Default is `strict=False` -- existing tools keep working with no changes.
+
+---
+
+## Adding third-party tools via MCP
+
+If you need to plug in tools from external services -- Google Workspace, GitHub, Postgres, PayPal, and so on -- Patter ships an MCP (Model Context Protocol) client that auto-discovers and wires up remote tool servers without writing wrapper handlers per tool. See [MCP integration](/python-sdk/mcp) for the full guide.
+
+---
+
+## Complete Example
+
+```python
+import os
+import asyncio
+from dotenv import load_dotenv
+from getpatter import Patter, Twilio, OpenAIRealtime
+
+load_dotenv()
+
+phone = Patter(
+    carrier=Twilio(),                               # TWILIO_* from env
+    phone_number=os.environ["PHONE_NUMBER"],
+    webhook_url=os.environ["WEBHOOK_URL"],
+)
+
+agent = phone.agent(
+    engine=OpenAIRealtime(),                        # OPENAI_API_KEY from env
+    system_prompt="""You are a customer service agent for an e-commerce store.
+Help customers check order status and process returns.
+Always ask for the order ID before looking anything up.""",
+    tools=[
+        {
+            "name": "get_order_status",
+            "description": "Look up an order by ID. Returns order status, items, and tracking info.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_id": {
+                        "type": "string",
+                        "description": "Order ID (e.g., ORD-123456)",
+                    },
+                },
+                "required": ["order_id"],
+            },
+            "webhook_url": "https://api.example.com/orders/status",
+        },
+        {
+            "name": "initiate_return",
+            "description": "Start a return process for a specific order item.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "reason": {
+                        "type": "string",
+                        "enum": ["defective", "wrong_item", "changed_mind", "other"],
+                    },
+                },
+                "required": ["order_id", "item_id", "reason"],
+            },
+            "webhook_url": "https://api.example.com/returns/initiate",
+        },
+    ],
+    first_message="Hi! I'm here to help with your order. Do you have an order ID I can look up?",
+)
+
+async def main():
+    await phone.serve(agent, port=8000)
+
+asyncio.run(main())
+```

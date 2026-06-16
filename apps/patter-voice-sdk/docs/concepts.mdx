@@ -1,0 +1,184 @@
+---
+title: "Core Concepts"
+description: "What Patter is, how a voice call flows through it, and the building blocks you'll use"
+icon: "book-open"
+---
+
+## What Patter does
+
+Patter is an open-source SDK that lets an AI agent answer and make phone calls. You write the agent logic — Patter handles the telephony plumbing (phone carrier, audio streams, speech recognition, speech synthesis, barge-in, call transfer, recording).
+
+A "hello world" is four lines:
+
+```python
+from getpatter import Patter, Twilio, OpenAIRealtime
+
+phone = Patter(carrier=Twilio(), phone_number="+15550001234")
+agent = phone.agent(engine=OpenAIRealtime(), system_prompt="You are a friendly receptionist.")
+await phone.serve(agent, tunnel=True)
+```
+
+Call your Twilio number; the AI picks up, talks to the caller, hangs up. Everything else — audio transcoding, webhook configuration, session lifecycle — is automatic.
+
+## Anatomy of a call
+
+When someone dials your number, audio flows through five layers. Each layer is **pluggable**:
+
+```
+┌─────────────┐
+│ Caller      │  "I'd like to book an appointment"
+└──────┬──────┘
+       │  (phone network, PSTN)
+       ▼
+┌─────────────┐
+│ Carrier     │  Twilio, Telnyx, or Plivo — answers, opens a media stream
+└──────┬──────┘
+       │  (WebSocket, audio frames)
+       ▼
+┌─────────────┐
+│ Patter SDK  │  Transcodes audio, runs barge-in detection, routes to the engine
+└──────┬──────┘
+       │  (PCM 16 kHz)
+       ▼
+┌─────────────┐
+│ Engine      │  Speech → Text (STT) → Your LLM → Text → Speech (TTS)
+└──────┬──────┘
+       │  (audio back, same path in reverse)
+       ▼
+  Caller hears the AI reply
+```
+
+The five building blocks you'll touch:
+
+### 1. Carrier — the phone line
+
+The carrier puts the call on the internet. Patter ships two:
+
+| Carrier | Env vars | Notes |
+|---|---|---|
+| `Twilio()` | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | mulaw 8 kHz; webhook signature verification via HMAC-SHA1 |
+| `Telnyx()` | `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID`, `TELNYX_PUBLIC_KEY` | PCM 16 kHz native; Ed25519 webhook verification |
+| `Plivo()` | `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN` | mulaw 8 kHz; V3 (HMAC-SHA256) webhook verification; native DTMF send |
+
+You pass one instance to `Patter(carrier=...)`. See [Carrier](/python-sdk/carrier).
+
+### 2. Engine vs pipeline — how the AI talks
+
+Patter supports two ways to get from audio-in to audio-out:
+
+**Engine mode (easiest)** — a single provider does everything:
+
+```python
+from getpatter import OpenAIRealtime, ElevenLabsConvAI
+
+agent = phone.agent(
+    engine=OpenAIRealtime(),   # STT + LLM + TTS in one WebSocket — ~500 ms latency
+    system_prompt="...",
+)
+```
+
+| Engine | What it does | Best for |
+|---|---|---|
+| `OpenAIRealtime()` | Speech-to-speech via OpenAI's Realtime API | Lowest latency, general-purpose |
+| `ElevenLabsConvAI()` | Managed conversational agent on ElevenLabs | Premium voice quality |
+
+**Pipeline mode (full control)** — you pick each stage:
+
+```python
+from getpatter import DeepgramSTT, AnthropicLLM, ElevenLabsTTS
+
+agent = phone.agent(
+    stt=DeepgramSTT(),           # speech → text
+    llm=AnthropicLLM(),          # text → text (ANTHROPIC_API_KEY from env)
+    tts=ElevenLabsTTS(),         # text → speech
+    system_prompt="...",
+)
+await phone.serve(agent)
+```
+
+Want fully custom LLM logic (multi-model routing, local models, an internal gateway)? Drop `llm=` and pass an async `on_message` callback to `serve()` instead. `llm=` and `on_message` are mutually exclusive.
+
+Three independent stages — swap any of them for a different vendor or local model:
+
+- **STT (Speech-to-Text)** — transcribes caller audio in real time. Providers: `DeepgramSTT`, `WhisperSTT`, `CartesiaSTT`, `SonioxSTT`, `SpeechmaticsSTT` (Python-only), `AssemblyAISTT`. See [STT](/python-sdk/stt).
+- **LLM (Large Language Model)** — generates the reply. Pass a class instance via `llm=`: `OpenAILLM`, `AnthropicLLM`, `GroqLLM`, `CerebrasLLM`, `GoogleLLM`. Tool calling works across all five. For anything else, use `on_message`. See [LLM](/python-sdk/llm).
+- **TTS (Text-to-Speech)** — synthesizes the reply audio. Providers: `ElevenLabsTTS`, `OpenAITTS`, `CartesiaTTS`, `RimeTTS`, `LMNTTTS`. See [TTS](/python-sdk/tts).
+
+Pick engine mode when you want minimum code. Pick pipeline mode when you need a specific LLM, a custom voice, or fine-grained control over latency / costs.
+
+### 3. Tools — letting the AI do things
+
+Tools are functions the LLM can call mid-conversation — "look up order #123", "transfer to billing", "schedule a callback for 3pm". When the LLM decides to use a tool, Patter runs your handler (or POSTs to a webhook) and feeds the result back into the conversation.
+
+```python
+from getpatter import tool
+
+@tool
+async def lookup_order(order_id: str) -> dict:
+    """Look up an order by ID."""
+    return await db.orders.find_one({"id": order_id})
+
+agent = phone.agent(
+    engine=OpenAIRealtime(),
+    system_prompt="You are a support agent.",
+    tools=[lookup_order],
+)
+```
+
+Two system tools are always available: `transfer_call` (move the call to a human) and `end_call` (hang up). See [Tools](/python-sdk/tools).
+
+### 4. Guardrails — what the AI can't say
+
+Guardrails run on every LLM output before it reaches TTS. They can block terms, run a custom check, or substitute a safe reply:
+
+```python
+from getpatter import guardrail
+
+agent = phone.agent(
+    engine=OpenAIRealtime(),
+    system_prompt="...",
+    guardrails=[
+        guardrail(name="no-medical", blocked_terms=["diagnosis", "prescription"],
+                  replacement="Please consult a doctor."),
+    ],
+)
+```
+
+See [Guardrails](/python-sdk/guardrails).
+
+### 5. Tunnel — making your laptop reachable
+
+A carrier needs a public HTTPS URL to deliver webhooks. In dev you don't have one — Patter ships a built-in Cloudflare Quick Tunnel:
+
+```python
+await phone.serve(agent, tunnel=True)   # starts cloudflared, configures Twilio webhook
+```
+
+In production you point `webhook_url="api.yourcompany.com"` at your own server and skip the tunnel entirely. See [Tunneling](/dev-tools/tunneling).
+
+## Barge-in
+
+When the caller starts speaking while the AI is mid-reply, Patter cancels the in-flight audio and routes the new input to the LLM. Tracking is mark-based (per-frame) so cancellation happens on the exact syllable that got interrupted — not at a coarse chunk boundary.
+
+Default sensitivity is 300 ms of sustained voice. Tune with `agent(barge_in_threshold_ms=500)` if you're on a noisy line (speakerphone, ngrok relay).
+
+## Audio pipeline — transcoding details
+
+The carriers don't all speak the same format. Patter transcodes so every STT / engine sees the same PCM 16 kHz stream:
+
+| Carrier | Wire format | Patter does |
+|---|---|---|
+| Twilio | mulaw 8 kHz (`ulaw/8000`) | Decode to PCM 16 kHz in, encode back to mulaw out |
+| Telnyx | PCM 16 kHz (L16/16000) | Passthrough |
+| Plivo | mulaw 8 kHz (`audio/x-mulaw`) | Decode to PCM 16 kHz in, encode back to mulaw out |
+
+OpenAI TTS returns 24 kHz PCM — Patter resamples to 16 kHz before sending to the carrier. You never touch any of this.
+
+## What's next
+
+<CardGroup cols={2}>
+  <Card title="Python Quickstart" icon="rocket" href="/python-sdk/quickstart">Answer a real phone call in 5 minutes.</Card>
+  <Card title="TypeScript Quickstart" icon="rocket" href="/typescript-sdk/quickstart">Same, but in TS.</Card>
+  <Card title="Carrier setup" icon="phone" href="/python-sdk/carrier">Twilio / Telnyx / Plivo credentials.</Card>
+  <Card title="Engines" icon="bolt" href="/python-sdk/engines">OpenAI Realtime, ElevenLabs ConvAI.</Card>
+</CardGroup>

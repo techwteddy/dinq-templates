@@ -1,0 +1,435 @@
+export { Patter } from "./client";
+export { SpeechEvents } from "./_speech-events";
+export type {
+  SpeechEventCallback,
+  ConversationStateSnapshot,
+  UserState,
+  AgentState,
+  EouTrigger,
+} from "./_speech-events";
+export { defineTool } from "./tools/tool-decorator";
+export type { DefineToolInput, ParamSpec } from "./tools/tool-decorator";
+export { openclawConsult, openclawPostCallNotifier } from "./consult";
+export type { Logger } from "./logger";
+export { getLogger, setLogger } from "./logger";
+export type { CarrierKind } from "./types";
+export type {
+  IncomingMessage,
+  STTConfig,
+  TTSConfig,
+  LocalOptions,
+  AgentOptions,
+  ServeOptions,
+  LocalCallOptions,
+  CallResult,
+  CallOutcome,
+  MessageHandler,
+  CallEventHandler,
+  PipelineMessageHandler,
+  ToolDefinition,
+  ConsultConfig,
+  OpenAICompatibleConsult,
+  PipelineHooks,
+  HookContext,
+  RealtimeTurnDetection,
+  SessionContext,
+  TransferCallOptions,
+  TransferCallResult,
+} from "./types";
+// `Guardrail` is intentionally not re-exported from `./types` — the public
+// `Guardrail` identifier is the class from `./public-api` (exported below),
+// which is structurally compatible with the internal interface.
+export { SentenceChunker, DEFAULT_MIN_SENTENCE_LEN } from "./sentence-chunker";
+export { PipelineHookExecutor } from "./pipeline-hooks";
+export { filterMarkdown, filterEmoji, filterForTTS } from "./text-transforms";
+export {
+  ErrorCode,
+  PatterError,
+  PatterConfigError,
+  PatterConnectionError,
+  AuthenticationError,
+  ProvisionError,
+  RateLimitError,
+} from "./errors";
+export {
+  deepgram,
+  whisper,
+  elevenlabs,
+  openaiTts,
+  soniox,
+  speechmatics,
+  assemblyai,
+  cartesia,
+  rime,
+  lmnt,
+  ultravox,
+  geminiLive,
+} from "./providers";
+export type { RealtimeConfig } from "./providers";
+export { DEFAULT_PRICING, mergePricing, calculateSttCost, calculateTtsCost, calculateRealtimeCost, calculateTelephonyCost } from "./pricing";
+export type { ProviderPricing } from "./pricing";
+export { CallMetricsAccumulator } from "./metrics";
+export type { LatencyBreakdown, CostBreakdown, TurnMetrics, CallMetrics, CallControl } from "./metrics";
+export type { LocalConfig } from "./server";
+export { MetricsStore } from "./dashboard/store";
+export type { CallRecord, SSEEvent } from "./dashboard/store";
+export { makeAuthMiddleware } from "./dashboard/auth";
+export { callsToCsv, callsToJson } from "./dashboard/export";
+export { mountDashboard, mountApi } from "./dashboard/routes";
+export { notifyDashboard } from "./dashboard/persistence";
+export { LLMLoop, OpenAILLMProvider, DefaultToolExecutor } from "./llm-loop";
+export {
+  MinWordsStrategy,
+  evaluateStrategies as evaluateBargeInStrategies,
+  resetStrategies as resetBargeInStrategies,
+} from "./services/barge-in-strategies";
+export type {
+  BargeInStrategy,
+  EvaluateContext as BargeInEvaluateContext,
+  MinWordsStrategyOptions,
+} from "./services/barge-in-strategies";
+export type {
+  LLMProvider,
+  LLMChunk,
+  ToolExecutor,
+  DefaultToolExecutorOptions,
+} from "./llm-loop";
+export { FallbackLLMProvider, AllProvidersFailedError, PartialStreamError } from "./fallback-provider";
+export type { FallbackLLMProviderOptions } from "./fallback-provider";
+export { RemoteMessageHandler, isRemoteUrl, isWebSocketUrl } from "./remote-message";
+export {
+  PatterTool,
+  type PatterToolOptions,
+  type PatterToolExecuteArgs,
+  type PatterToolResult,
+} from "./integrations";
+export { TestSession } from "./test-mode";
+export { ElevenLabsConvAIAdapter } from "./providers/elevenlabs-convai";
+export { OpenAIRealtimeAdapter } from "./providers/openai-realtime";
+export { GeminiLiveAdapter, GEMINI_DEFAULT_INPUT_SR, GEMINI_DEFAULT_OUTPUT_SR } from "./providers/gemini-live";
+export type { GeminiLiveEventHandler } from "./providers/gemini-live";
+export { UltravoxRealtimeAdapter, ULTRAVOX_DEFAULT_API_BASE, ULTRAVOX_DEFAULT_SR } from "./providers/ultravox-realtime";
+export type { UltravoxEventHandler } from "./providers/ultravox-realtime";
+export { scheduleCron, scheduleOnce, scheduleInterval } from "./scheduler";
+export type { ScheduleHandle, JobCallback } from "./scheduler";
+// Provider adapter types (re-exported for advanced users who build custom
+// pipelines). The concrete wrapper classes are exported below under the
+// namespaced STT/TTS names (Phase 1a of the v0.5.0 API refactor).
+export type { SonioxSTTOptions } from "./providers/soniox-stt";
+export type { AssemblyAIModel, AssemblyAIEncoding } from "./providers/assemblyai-stt";
+export type { CartesiaEncoding } from "./providers/cartesia-stt";
+export type { LMNTAudioFormat, LMNTModel, LMNTSampleRate } from "./providers/lmnt-tts";
+
+// Provider-defined const enums + types. Re-exported here so user code
+// can ``import { OpenAIRealtimeModel, ElevenLabsModel, ... } from "getpatter"``
+// without reaching into ``getpatter/providers/*``. Mirrors the Python
+// SDK's top-level ``getpatter`` namespace.
+export {
+  OpenAIRealtimeAudioFormat,
+  OpenAIRealtimeModel,
+  OpenAIRealtimeVADType,
+  OpenAITranscriptionModel,
+  OpenAIVoice,
+} from "./providers/openai-realtime";
+export { ElevenLabsModel, ElevenLabsOutputFormat } from "./providers/elevenlabs-tts";
+export { DeepgramModel } from "./providers/deepgram-stt";
+export { CartesiaTTSModel, CartesiaTTSVoiceMode } from "./providers/cartesia-tts";
+export { RimeModel, RimeAudioFormat } from "./providers/rime-tts";
+export { PricingUnit, PRICING_VERSION, PRICING_LAST_UPDATED } from "./pricing";
+export type { PricingUnitValue, ModelPricing } from "./pricing";
+
+// New namespaced STT classes — options-object constructor with env fallback.
+export { STT as DeepgramSTT } from "./stt/deepgram";
+export type { DeepgramSTTOptions } from "./stt/deepgram";
+export { STT as WhisperSTT } from "./stt/whisper";
+export type { WhisperSTTOptions } from "./stt/whisper";
+export { STT as OpenAITranscribeSTT } from "./stt/openai-transcribe";
+export type { OpenAITranscribeSTTOptions } from "./stt/openai-transcribe";
+export { STT as CartesiaSTT } from "./stt/cartesia";
+export type { CartesiaSTTOptions } from "./stt/cartesia";
+export { STT as SonioxSTT } from "./stt/soniox";
+export { STT as AssemblyAISTT } from "./stt/assemblyai";
+export type { AssemblyAISTTOptions } from "./stt/assemblyai";
+export { STT as SpeechmaticsSTT } from "./stt/speechmatics";
+export type { SpeechmaticsSTTOptions } from "./stt/speechmatics";
+export {
+  TurnDetectionMode as SpeechmaticsTurnDetectionMode,
+  SpeechmaticsSampleRate,
+  SpeechmaticsAudioEncoding,
+  SpeechmaticsOperatingPoint,
+  SpeechmaticsServerMessage,
+} from "./providers/speechmatics-stt";
+
+// New namespaced TTS classes.
+// `ElevenLabsTTS` is the public facade — defaults to HTTP REST (pcm_16000).
+// `ElevenLabsWebSocketTTS` is the WebSocket streaming variant.
+// `ElevenLabsRestTTS` is a direct alias of the HTTP provider class.
+export { TTS as ElevenLabsTTS } from "./tts/elevenlabs";
+export type { ElevenLabsTTSOptions } from "./tts/elevenlabs";
+export { TTS as ElevenLabsWebSocketTTS } from "./tts/elevenlabs-ws";
+export type { ElevenLabsWebSocketOptions } from "./tts/elevenlabs-ws";
+export { ElevenLabsTTS as ElevenLabsRestTTS } from "./providers/elevenlabs-tts";
+export { TTS as OpenAITTS } from "./tts/openai";
+export type { OpenAITTSOptions } from "./tts/openai";
+export { TTS as CartesiaTTS } from "./tts/cartesia";
+export type { CartesiaTTSOptions } from "./tts/cartesia";
+export { TTS as RimeTTS } from "./tts/rime";
+export type { RimeTTSOptions } from "./tts/rime";
+export { TTS as LMNTTTS } from "./tts/lmnt";
+export type { LMNTTTSOptions } from "./tts/lmnt";
+export { TTS as InworldTTS } from "./tts/inworld";
+export type { InworldTTSOptions } from "./tts/inworld";
+
+// New namespaced LLM classes (Phase 2 of the v0.5.x API refactor).
+export { LLM as OpenAILLM } from "./llm/openai";
+export type { OpenAILLMOptions } from "./llm/openai";
+export { LLM as AnthropicLLM } from "./llm/anthropic";
+export type { AnthropicLLMOptions } from "./llm/anthropic";
+export { LLM as GroqLLM } from "./llm/groq";
+export type { GroqLLMOptions } from "./llm/groq";
+export { LLM as CerebrasLLM } from "./llm/cerebras";
+export type { CerebrasLLMOptions } from "./llm/cerebras";
+export { LLM as GoogleLLM } from "./llm/google";
+export type { GoogleLLMOptions } from "./llm/google";
+// Agent-runtime LLM providers (Patter as the voice shell in front of an
+// OpenAI-compatible agent runtime / local inference gateway).
+export { LLM as OpenAICompatibleLLM, OpenAICompatibleLLMProvider } from "./llm/openai-compatible";
+export type { OpenAICompatibleLLMOptions } from "./llm/openai-compatible";
+export { hashCaller } from "./llm/openai-compatible";
+// Canonical "Custom LLM" name for the generic engine — works with Hermes,
+// OpenClaw, Ollama/vLLM/LM Studio, or any OpenAI-compatible service.
+export { LLM as CustomLLM } from "./llm/custom";
+export type { CustomLLMOptions } from "./llm/custom";
+export { LLM as HermesLLM } from "./llm/hermes";
+export type { HermesLLMOptions } from "./llm/hermes";
+export { LLM as OpenClawLLM } from "./llm/openclaw";
+export type { OpenClawLLMOptions } from "./llm/openclaw";
+
+// Namespace objects mirroring the Python ``from getpatter.llm import hermes``
+// ergonomics: ``import { hermes } from 'getpatter'; new hermes.LLM()`` builds
+// the SAME class as the ``HermesLLM`` named export above. Provided alongside
+// (not instead of) the named exports.
+import { LLM as HermesLLMClass } from "./llm/hermes";
+import { LLM as OpenClawLLMClass } from "./llm/openclaw";
+import { LLM as OpenAICompatibleLLMClass } from "./llm/openai-compatible";
+import { LLM as CustomLLMClass } from "./llm/custom";
+export const hermes = Object.freeze({ LLM: HermesLLMClass });
+export const openclaw = Object.freeze({ LLM: OpenClawLLMClass });
+export const openaiCompatible = Object.freeze({ LLM: OpenAICompatibleLLMClass });
+export const custom = Object.freeze({ LLM: CustomLLMClass });
+
+// Voice Activity Detection (server-side) — Silero ONNX.
+export { SileroVAD } from "./providers/silero-vad";
+export type { SileroVADOptions, SileroSampleRate } from "./providers/silero-vad";
+
+// Semantic turn detection (end-of-utterance) — pipecat-ai smart-turn v3,
+// ONNX. Opt-in via ``agent.turnDetector``; the model file is NOT bundled —
+// download from https://huggingface.co/pipecat-ai/smart-turn-v3 and set
+// PATTER_SMART_TURN_MODEL (or pass ``modelPath``).
+export { SmartTurnDetector, SMART_TURN_MODEL_ENV_VAR } from "./providers/smart-turn";
+export type { SmartTurnDetectorOptions } from "./providers/smart-turn";
+
+// Noise-suppression audio filters (opt-in, plug into ``agent.audioFilter``).
+// DeepFilterNet — community ONNX, no license required.
+export { DeepFilterNetFilter } from "./providers/deepfilternet-filter";
+export type { DeepFilterNetOptions } from "./providers/deepfilternet-filter";
+// Krisp VIVA — scaffold for parity with Python SDK. Throws at construction
+// until Krisp publishes an official Node binding. See file header.
+export {
+  KrispVivaFilter,
+  KrispSampleRate,
+  KrispFrameDuration,
+} from "./providers/krisp-filter";
+export type { KrispVivaFilterOptions } from "./providers/krisp-filter";
+
+// Telephony carriers.
+export { Carrier as Twilio } from "./telephony/twilio";
+export type { TwilioCarrierOptions } from "./telephony/twilio";
+export { Carrier as Telnyx } from "./telephony/telnyx";
+export type { TelnyxCarrierOptions } from "./telephony/telnyx";
+export { Carrier as Plivo } from "./telephony/plivo";
+export type { PlivoCarrierOptions } from "./telephony/plivo";
+
+// Realtime / ConvAI engines.
+export { Realtime as OpenAIRealtime } from "./engines/openai";
+export type { RealtimeOptions as OpenAIRealtimeOptions } from "./engines/openai";
+export { Realtime2 as OpenAIRealtime2 } from "./engines/openai-2";
+export type { Realtime2Options as OpenAIRealtime2Options } from "./engines/openai-2";
+export { OpenAIRealtime2Adapter } from "./providers/openai-realtime-2";
+export { ConvAI as ElevenLabsConvAI } from "./engines/elevenlabs";
+export type { ConvAIOptions as ElevenLabsConvAIOptions } from "./engines/elevenlabs";
+
+// Tunnel markers.
+export { CloudflareTunnel, Ngrok, Static as StaticTunnel } from "./tunnels";
+
+// Public API primitives.
+export { Tool, Guardrail, tool, guardrail } from "./public-api";
+export type { ToolOptions, GuardrailOptions, ToolHandler } from "./public-api";
+export {
+  mulawToPcm16,
+  pcm16ToMulaw,
+  resample8kTo16k,
+  resample16kTo8k,
+  resample24kTo16k,
+  StatefulResampler,
+  PcmCarry,
+  createResampler16kTo8k,
+  createResampler8kTo16k,
+  createResampler24kTo16k,
+  createResampler24kTo8k,
+} from "./audio/transcoding";
+export type { StatefulResamplerOptions } from "./audio/transcoding";
+// Carrier-neutral local call recording (stereo WAV: left=caller, right=agent).
+// Enabled via `serve({ localRecording })`; exported for programmatic use,
+// matching Python's importable `getpatter.audio.call_recorder` module.
+export {
+  LocalCallRecorder,
+  RECORDING_SAMPLE_RATE,
+  AGENT_BACKLOG_CAP_S,
+} from "./audio/call-recorder";
+export type { RecorderEncoding } from "./audio/call-recorder";
+export { startTunnel } from "./tunnel";
+export type { TunnelHandle } from "./tunnel";
+export { ChatContext } from "./chat-context";
+export type { ChatMessage, ChatRole, OpenAIMessage, AnthropicMessage, AnthropicConversion } from "./chat-context";
+export {
+  IVRActivity,
+  TfidfLoopDetector,
+  DTMF_EVENTS,
+  formatDtmf,
+} from "./services/ivr";
+export type {
+  DtmfEvent,
+  IVRActivityOptions,
+  IVRToolDefinition,
+  TfidfLoopDetectorOptions,
+  LoopCallback,
+  SilenceCallback,
+} from "./services/ivr";
+export {
+  BackgroundAudioPlayer,
+  BuiltinAudioClip,
+  builtinClipPath,
+  mixPcm,
+  resamplePcm,
+  selectSoundFromList,
+} from "./audio/background-audio";
+export type {
+  AudioConfig,
+  AudioSource,
+  BackgroundAudioOptions,
+  BuiltinAudioClipName,
+  BuiltinPcmSource,
+  FilePcmSource,
+  RawPcmSource,
+} from "./audio/background-audio";
+
+// Telephony adapters — direct REST clients mirroring the Python adapters.
+export { TwilioAdapter } from "./providers/twilio-adapter";
+export type {
+  TwilioAdapterOptions,
+  ProvisionNumberOptions as TwilioProvisionNumberOptions,
+  ProvisionNumberResult as TwilioProvisionNumberResult,
+  ConfigureNumberOptions as TwilioConfigureNumberOptions,
+  InitiateCallOptions as TwilioInitiateCallOptions,
+  InitiateCallResult as TwilioInitiateCallResult,
+} from "./providers/twilio-adapter";
+export { TelnyxAdapter } from "./providers/telnyx-adapter";
+export type {
+  ProvisionNumberOptions as TelnyxProvisionNumberOptions,
+  ProvisionNumberResult as TelnyxProvisionNumberResult,
+  ConfigureNumberOptions as TelnyxConfigureNumberOptions,
+  InitiateCallOptions as TelnyxInitiateCallOptions,
+  InitiateCallResult as TelnyxInitiateCallResult,
+  EndCallOptions as TelnyxEndCallOptions,
+} from "./providers/telnyx-adapter";
+export { PlivoAdapter } from "./providers/plivo-adapter";
+export type {
+  InitiateCallOptions as PlivoInitiateCallOptions,
+  InitiateCallResult as PlivoInitiateCallResult,
+} from "./providers/plivo-adapter";
+
+// Telnyx STT / TTS public enums (parity with Python — these were
+// previously defined but never re-exported from the package root).
+export {
+  TelnyxSTT,
+  TelnyxSTTSampleRate,
+  TelnyxSTTInputFormat,
+} from "./providers/telnyx-stt";
+export type {
+  Transcript as TelnyxSTTTranscript,
+  TelnyxTranscriptionEngine,
+} from "./providers/telnyx-stt";
+export {
+  TelnyxTTS,
+  TelnyxTTSVoice,
+  TelnyxTTSSampleRate,
+} from "./providers/telnyx-tts";
+
+// Evaluation framework — declarative eval cases, an LLM judge, the
+// real-pipeline EvalSession harness, and chainable turn assertions.
+// Mirrors Python `getpatter.evals` (run via `getpatter eval run <suite>`).
+export {
+  EvalRunner,
+  EvalSession,
+  FakeAudioSender,
+  FakeSTT,
+  FakeTTS,
+  LLMJudge,
+  ScriptedLLMProvider,
+  TurnExpectation,
+  evalResultToDict,
+  expect,
+  historyTranscript,
+  loadSuite,
+  textTurn,
+  toolCallTurn,
+} from "./evals";
+export type {
+  AgentCallable,
+  AgentFactory,
+  AgentTextContainsOptions,
+  EvalCase,
+  EvalResult,
+  EvalRunnerOptions,
+  EvalSessionOptions,
+  EvalSuite,
+  EvalTurn,
+  JudgeBackend,
+  JudgeResult,
+  LLMJudgeOptions,
+  ScriptedLLMCall,
+  ToolCallRecord,
+  TranscriptEntry,
+  TurnResult,
+} from "./evals";
+
+// Observability — OTel-compatible tracing (optional peer dep).
+export {
+  initTracing,
+  // Without these exports users could not flush the BatchSpanProcessor
+  // Patter creates (NodeTracerProvider does NOT flush on exit, unlike the
+  // Python OTel SDK's atexit hook) — trailing spans were silently dropped
+  // at process exit — nor stamp patter.cost.* attributes (Python parity).
+  shutdownTracing,
+  withSpan,
+  recordPatterAttrs,
+  patterCallScope,
+  attachSpanExporter,
+  startSpan,
+  isTracingEnabled,
+  EventBus,
+  SPAN_CALL,
+  SPAN_STT,
+  SPAN_LLM,
+  SPAN_TTS,
+  SPAN_TOOL,
+  SPAN_ENDPOINT,
+  SPAN_BARGEIN,
+} from "./observability";
+export type {
+  Span,
+  InitTracingOptions,
+  CallEvent,
+  PatterEventType,
+} from "./observability";

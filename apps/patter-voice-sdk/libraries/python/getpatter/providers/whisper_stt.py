@@ -1,0 +1,318 @@
+"""OpenAI Whisper STT adapter for the Patter SDK pipeline mode."""
+
+from __future__ import annotations
+
+import asyncio
+import io
+import logging
+import wave
+from enum import StrEnum
+from typing import ClassVar, AsyncIterator, Literal, Union
+
+import httpx
+
+from getpatter.providers.base import STTProvider, Transcript
+
+logger = logging.getLogger("getpatter")
+
+
+class WhisperModel(StrEnum):
+    """Models accepted by ``POST /v1/audio/transcriptions``.
+
+    ``gpt-4o-transcribe`` and ``gpt-4o-mini-transcribe`` were added alongside
+    the realtime-mini GA and share the same endpoint.
+    """
+
+    WHISPER_1 = "whisper-1"
+    GPT_4O_TRANSCRIBE = "gpt-4o-transcribe"
+    GPT_4O_MINI_TRANSCRIBE = "gpt-4o-mini-transcribe"
+
+
+class WhisperResponseFormat(StrEnum):
+    """Response formats accepted by ``POST /v1/audio/transcriptions``."""
+
+    JSON = "json"
+    VERBOSE_JSON = "verbose_json"
+
+
+class _Transcript(Transcript):  # type: ignore[misc]
+    """Backward-compat shim for code that imported the private class.
+
+    ``Transcript`` from ``providers.base`` is a frozen-ish dataclass; this
+    subclass lets callers do ``_Transcript(text="x")`` (positional text,
+    defaults for the rest) the way the old ad-hoc class allowed.
+    """
+
+    def __init__(
+        self, text: str, is_final: bool = True, confidence: float = 1.0
+    ) -> None:
+        super().__init__(text=text, is_final=is_final, confidence=confidence)
+
+
+OPENAI_TRANSCRIPTION_URL = "https://api.openai.com/v1/audio/transcriptions"
+# ~1 second of 16 kHz 16-bit mono audio
+BUFFER_SIZE_BYTES = 16000 * 2
+
+# Models accepted by ``POST /v1/audio/transcriptions``. ``gpt-4o-transcribe``
+# and ``gpt-4o-mini-transcribe`` were added alongside the realtime-mini GA
+# and share the same endpoint.
+_ALLOWED_MODELS = {m.value for m in WhisperModel}
+
+
+class WhisperSTT(STTProvider):
+    """Whisper (OpenAI) STT adapter — buffers PCM audio and transcribes in chunks.
+
+    Compatible with the DeepgramSTT interface so it can be swapped in pipeline
+    mode without changes to the calling code.
+
+    Args:
+        api_key: OpenAI API key.
+        language: BCP-47 language code (e.g. ``"en"``).
+        model: Whisper model to use. One of ``"whisper-1"``,
+            ``"gpt-4o-transcribe"``, ``"gpt-4o-mini-transcribe"``.
+        response_format: ``"json"`` (default) or ``"verbose_json"`` to
+            surface per-segment timestamps / confidence.
+    """
+
+    #: Stable pricing/dashboard key — read by stream-handler/metrics.
+    provider_key: ClassVar[str] = "whisper"
+
+    def __init__(
+        self,
+        api_key: str,
+        language: str = "en",
+        model: Union[WhisperModel, str] = WhisperModel.WHISPER_1,
+        response_format: Union[
+            WhisperResponseFormat, Literal["json", "verbose_json"]
+        ] = WhisperResponseFormat.JSON,
+    ) -> None:
+        if model not in _ALLOWED_MODELS:
+            raise ValueError(
+                f"WhisperSTT: unsupported model {model!r}. "
+                f"Expected one of {sorted(_ALLOWED_MODELS)}."
+            )
+        self.api_key = api_key
+        self.language = language
+        self.model = model
+        self.response_format = response_format
+        # Whisper buffers PCM and uploads as 16 kHz / 16-bit / mono WAV;
+        # expose these so observability cost computation has explicit values.
+        self.sample_rate = 16000
+        self.encoding = "linear16"
+        self._buffer = bytearray()
+        self._audio_bytes_sent: int = 0
+        # Queue holds Transcript items; None is a sentinel that signals the
+        # generator to stop after draining all real transcripts.
+        self._transcript_queue: asyncio.Queue[Transcript | None] = asyncio.Queue()
+        self._running = False
+        self._pending: set[asyncio.Task] = set()
+        self._client = httpx.AsyncClient(
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10.0,
+        )
+
+    def _record_transcript_cost(self) -> None:
+        """Emit ``patter.cost.stt_seconds`` for buffered audio."""
+        try:
+            from getpatter.observability.attributes import record_patter_attrs
+
+            bytes_per_sample = 1 if self.encoding == "mulaw" else 2
+            seconds = self._audio_bytes_sent / float(
+                self.sample_rate * bytes_per_sample
+            )
+            record_patter_attrs(
+                {
+                    "patter.cost.stt_seconds": seconds,
+                    "patter.stt.provider": "whisper",
+                }
+            )
+            self._audio_bytes_sent = 0
+        except Exception:  # pragma: no cover — defense in depth
+            logger.debug("_record_transcript_cost failed", exc_info=True)
+
+    @classmethod
+    def for_twilio(
+        cls,
+        api_key: str,
+        language: str = "en",
+        model: Union[WhisperModel, str] = WhisperModel.WHISPER_1,
+    ) -> "WhisperSTT":
+        """Factory mirroring the TS ``forTwilio`` helper.
+
+        Twilio delivers mulaw 8 kHz that the upstream transcoder converts
+        to PCM16 16 kHz before reaching this adapter, so no extra config
+        is needed today — the factory exists only for API parity.
+        """
+        return cls(api_key=api_key, language=language, model=model)
+
+    async def connect(self) -> None:
+        """Initialise the adapter (no persistent connection needed for Whisper).
+
+        Fully resets per-call state so a sequential second call on the same
+        instance works: ``close()`` closes the httpx client (every chunk of
+        call 2 raised ``client has been closed``) and leaves a ``None``
+        sentinel in the queue that instantly terminated call 2's
+        ``receive_transcripts`` loop.
+        """
+        self._running = True
+        self._buffer = bytearray()
+        if self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=10.0,
+            )
+        # Drain stale sentinels/transcripts from a previous call.
+        while not self._transcript_queue.empty():
+            try:
+                self._transcript_queue.get_nowait()
+            except asyncio.QueueEmpty:  # pragma: no cover - defensive
+                break
+        # Serialize-transcriptions chain anchor (see send_audio).
+        self._transcribe_chain = None
+
+    async def send_audio(self, audio_chunk: bytes) -> None:
+        """Buffer incoming PCM audio and transcribe when the buffer is full."""
+        self._audio_bytes_sent += len(audio_chunk)
+        self._buffer.extend(audio_chunk)
+        if len(self._buffer) >= BUFFER_SIZE_BYTES:
+            buf = bytes(self._buffer)
+            self._buffer.clear()
+
+            # Chain on the previous chunk's transcription: parallel HTTP
+            # requests with OpenAI's latency variance routinely delivered
+            # chunk N+1's final before chunk N's, scrambling word order in
+            # history ("call you tomorrow" / "I will"). Mirrors TS.
+            prev = getattr(self, "_transcribe_chain", None)
+
+            async def _ordered(p=prev, b=buf) -> None:
+                if p is not None:
+                    try:
+                        await p
+                    except Exception:  # pragma: no cover - prior chunk logged
+                        pass
+                await self._transcribe_and_enqueue(b)
+
+            task = asyncio.create_task(_ordered())
+            self._transcribe_chain = task
+            self._pending.add(task)
+            task.add_done_callback(self._pending.discard)
+
+    async def _transcribe_and_enqueue(self, pcm_data: bytes) -> None:
+        transcript = await self._transcribe_buffer(pcm_data)
+        if transcript:
+            await self._transcript_queue.put(transcript)
+
+    async def _transcribe_buffer(self, pcm_data: bytes) -> Transcript | None:
+        """Send a PCM buffer to the Whisper API and return the transcript."""
+        wav_buf = io.BytesIO()
+        with wave.open(wav_buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(pcm_data)
+        wav_buf.seek(0)
+        try:
+            data = {
+                "model": self.model,
+                "language": self.language,
+                "response_format": self.response_format,
+            }
+            resp = await self._client.post(
+                OPENAI_TRANSCRIPTION_URL,
+                files={"file": ("audio.wav", wav_buf, "audio/wav")},
+                data=data,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            text = (payload.get("text") or "").strip()
+            if not text:
+                return None
+            confidence = _extract_confidence(payload)
+            return Transcript(text=text, is_final=True, confidence=confidence)
+        except Exception as exc:
+            logger.exception("WhisperSTT transcription error: %s", exc)
+            return None
+
+    async def receive_transcripts(self) -> AsyncIterator[Transcript]:
+        """Async generator that yields transcripts as they arrive.
+
+        Continues draining the queue after ``_running`` is set to False so
+        that transcripts flushed by :meth:`close` (trailing audio buffer +
+        in-flight tasks) are not silently dropped.  ``close()`` places a
+        ``None`` sentinel into the queue once all flushing is complete, which
+        causes this generator to return.
+        """
+        while True:
+            try:
+                transcript = await asyncio.wait_for(
+                    self._transcript_queue.get(), timeout=0.1
+                )
+            except asyncio.TimeoutError:
+                # If _running is False and the queue is empty there is nothing
+                # left to yield — the sentinel has not arrived yet only if
+                # close() hasn't been called; keep waiting in that case.
+                if not self._running and self._transcript_queue.empty():
+                    # close() was never called (e.g. unit test tear-down) —
+                    # give up gracefully instead of looping forever.
+                    break
+                continue
+            # Sentinel placed by close() after all pending tasks finish.
+            if transcript is None:
+                break
+            if transcript.is_final:
+                self._record_transcript_cost()
+            yield transcript
+
+    async def close(self) -> None:
+        """Flush remaining buffer and close the HTTP client.
+
+        Always flushes whatever audio remains in the buffer (when non-empty)
+        so the trailing 0–250 ms before end-of-utterance are not silently
+        dropped. Previously the buffer was only transcribed when it had
+        accumulated more than ~25% of ``BUFFER_SIZE_BYTES``, which discarded
+        short tail-end utterances entirely.
+
+        Ordering is deliberate: ``_running`` is set to False *after* all
+        pending tasks complete and the remaining buffer is transcribed.  A
+        ``None`` sentinel is then placed in the queue so that
+        :meth:`receive_transcripts` can drain every real transcript before
+        it stops iterating — nothing is silently dropped.
+        """
+        # Flush remaining buffer before signalling the receiver to stop.
+        if len(self._buffer) > 0:
+            transcript = await self._transcribe_buffer(bytes(self._buffer))
+            if transcript:
+                await self._transcript_queue.put(transcript)
+        self._buffer.clear()
+        # Wait for any in-flight transcription tasks so their results land in
+        # the queue before the sentinel.
+        if self._pending:
+            await asyncio.gather(*self._pending, return_exceptions=True)
+        # Signal _running=False then place sentinel so receive_transcripts()
+        # drains remaining items and exits cleanly.
+        self._running = False
+        await self._transcript_queue.put(None)
+        await self._client.aclose()
+
+
+def _extract_confidence(payload: dict) -> float:
+    """Derive a confidence score from the Whisper verbose_json segments.
+
+    OpenAI returns per-segment ``avg_logprob`` in verbose_json. We convert
+    via ``exp(avg_logprob)`` averaged across segments and clamp to [0, 1].
+    When the payload doesn't carry segment data we fall back to 1.0 so
+    existing consumers keep their current behaviour.
+    """
+    segments = payload.get("segments")
+    if not segments:
+        return 1.0
+    import math
+
+    scores: list[float] = []
+    for seg in segments:
+        logp = seg.get("avg_logprob")
+        if isinstance(logp, (int, float)):
+            scores.append(max(0.0, min(1.0, math.exp(float(logp)))))
+    if not scores:
+        return 1.0
+    return sum(scores) / len(scores)

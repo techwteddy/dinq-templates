@@ -1,0 +1,69 @@
+# Patter pre-commit hooks.
+# Adapted from https://github.com/mcp-use/mcp-use/blob/main/.pre-commit-config.yaml
+# (MIT-licensed reference project) for Patter's libraries/python/ (Python) + libraries/typescript/ (TS) layout.
+#
+# Install locally:
+#   pip install pre-commit && pre-commit install
+# Run manually on the whole repo:
+#   pre-commit run --all-files
+
+repos:
+  # ── Python: ruff (disabled for now, re-enable after one-shot cleanup) ────
+  # ruff's initial run against our codebase produces 132 findings including
+  # 14 "unused" import-removals that actually break conftest fixtures and
+  # side-effect imports. We'll land a dedicated cleanup PR (ruff check --fix
+  # + manual review of each F401) and then re-enable this block with the
+  # same args as before:
+  #   args: [--fix, --exit-non-zero-on-fix]
+  # - repo: https://github.com/astral-sh/ruff-pre-commit
+  #   rev: v0.6.9
+  #   hooks:
+  #     - id: ruff
+  #       args: [--fix, --exit-non-zero-on-fix]
+  #       files: ^libraries/python/.*\.py$
+  #       types: [python]
+  #     - id: ruff-format
+  #       files: ^libraries/python/.*\.py$
+  #       types: [python]
+
+  # ── Hygiene (all files) ──────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.(ogg|onnx|png|jpg|jpeg|pdf|ico|lock)$
+      - id: end-of-file-fixer
+        exclude: \.(ogg|onnx|png|jpg|jpeg|pdf|ico|lock)$
+      - id: check-yaml
+        exclude: (package-lock\.json|pnpm-lock\.yaml)$
+      - id: check-json
+        exclude: (tsconfig.*\.json)$ # allow comments
+      - id: check-added-large-files
+        args: [--maxkb=3000] # 3MB cap (silero_vad.onnx is ~2.2MB)
+        exclude: \.(onnx|ogg)$ # vendored bundled assets
+      - id: debug-statements
+        files: ^libraries/python/.*\.py$
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # ── Secret scan on every commit ──────────────────────────────────────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  # ── TypeScript lint is covered by the dedicated 'typescript' job in
+  # .github/workflows/test.yml (which does npm ci + npm run lint with the
+  # full node_modules tree available). Running it from pre-commit required
+  # provisioning a separate node install inside the pre-commit job only to
+  # duplicate work — skipped here on purpose.
+
+# No default_language_version pin: CI runners aren't guaranteed to have
+# python3.11 specifically, and pre-commit hooks (ruff, gitleaks, the generic
+# hygiene checks) work on any Python >= 3.8. Pinning 3.11 here caused the
+# CI job to fail with 'failed to find interpreter for Builtin discover of
+# python_spec=python3.11' whenever the workflow picked a different version
+# via actions/setup-python.
+
+# The pre-push hook in .githooks/pre-push complements this with a full test run.

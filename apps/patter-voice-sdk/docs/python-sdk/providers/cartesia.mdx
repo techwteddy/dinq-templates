@@ -1,0 +1,108 @@
+---
+title: "Cartesia"
+description: "Cartesia STT (ink-whisper) and TTS (sonic) providers."
+icon: "waveform"
+---
+
+# Cartesia STT
+
+Streaming speech-to-text using Cartesia's `ink-whisper` model. Pure-`aiohttp` transport, no vendor SDK required.
+
+## Install
+
+```bash
+pip install "getpatter[cartesia]"
+```
+
+## Usage
+
+```python
+# Namespaced import
+from getpatter.stt import cartesia
+
+stt = cartesia.STT()                                      # reads CARTESIA_API_KEY
+stt = cartesia.STT(api_key="csk_...", language="en")
+
+# Flat alias (equivalent)
+from getpatter import CartesiaSTT
+
+stt = CartesiaSTT()
+```
+
+Plug it into an agent:
+
+```python
+import asyncio
+from getpatter import Patter, Twilio, CartesiaSTT, ElevenLabsTTS
+
+phone = Patter(carrier=Twilio(), phone_number="+15550001234")
+
+agent = phone.agent(
+    stt=CartesiaSTT(),                                    # CARTESIA_API_KEY from env
+    tts=ElevenLabsTTS(voice_id="rachel"),
+    system_prompt="You are a helpful assistant.",
+)
+
+asyncio.run(phone.serve(agent))
+```
+
+Supported sample rates: 8000, 16000, 24000, 44100, 48000 Hz.
+
+## Low-level usage
+
+```python
+from getpatter.providers.cartesia_stt import CartesiaSTT as _LowLevelSTT
+
+stt = _LowLevelSTT(api_key="csk_...", language="en")
+await stt.connect()
+await stt.send_audio(pcm_chunk)  # 16 kHz PCM s16le
+async for t in stt.receive_transcripts():
+    print(t.text, t.is_final, t.confidence)
+await stt.close()
+```
+
+# Cartesia TTS
+
+`CartesiaTTS` is a Patter `TTSProvider` backed by Cartesia's [bytes endpoint](https://docs.cartesia.ai/api-reference/tts/bytes). It streams raw PCM_S16LE chunks that drop directly into Patter's pipeline with no transcoding.
+
+## Usage
+
+```python
+# Namespaced import
+from getpatter.tts import cartesia
+
+tts = cartesia.TTS()                                      # reads CARTESIA_API_KEY
+tts = cartesia.TTS(voice="f786b574-daa5-4673-aa0c-cbe3e8534c02")  # Katie
+
+# Flat alias (equivalent)
+from getpatter import CartesiaTTS
+
+tts = CartesiaTTS(voice="f786b574-daa5-4673-aa0c-cbe3e8534c02")
+```
+
+In an agent:
+
+```python
+from getpatter import Patter, Twilio, DeepgramSTT, CartesiaTTS
+
+phone = Patter(carrier=Twilio(), phone_number="+15550001234")
+
+agent = phone.agent(
+    stt=DeepgramSTT(),
+    tts=CartesiaTTS(voice="f786b574-daa5-4673-aa0c-cbe3e8534c02"),
+    system_prompt="You are a helpful assistant.",
+)
+```
+
+## Options
+
+| Option | Default | Notes |
+|---|---|---|
+| `api_key` | `None` | Reads from `CARTESIA_API_KEY` when omitted. |
+| `model` | `"sonic-2"` | Any Cartesia TTS model id (e.g. `"sonic-3"`). |
+| `voice` | `"f786b574-..."` | Cartesia voice id. |
+| `language` | `"en"` | ISO 639-1 code. |
+| `sample_rate` | `16000` | Hz. |
+| `speed` | `None` | `"fastest" ... "slowest"` or float in `[0.6, 2.0]`. |
+| `emotion` | `None` | See Cartesia's emotion list. |
+| `volume` | `None` | Float in `[0.5, 2.0]` for sonic-3. |

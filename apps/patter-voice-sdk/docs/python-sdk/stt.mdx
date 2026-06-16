@@ -1,0 +1,192 @@
+---
+title: "STT"
+description: "Speech-to-text providers supported by Patter."
+icon: "microphone"
+---
+
+# STT (Speech-to-Text)
+
+STT is used in **pipeline mode** to transcribe caller audio before it reaches your LLM. If you use an [engine](/python-sdk/engines) such as `OpenAIRealtime` or `ElevenLabsConvAI`, speech recognition is handled internally by the engine and you do not configure STT separately.
+
+Each STT ships as both a **namespaced** class (`from getpatter.stt import deepgram` → `deepgram.STT()`) and a **flat alias** (`from getpatter import DeepgramSTT`). They are equivalent — pick whichever reads best. The flat aliases are convenient for short examples; the namespaced form avoids name collisions when you import several STTs together.
+
+## Quickstart
+
+```python
+import asyncio
+from getpatter import Patter, Twilio, DeepgramSTT, ElevenLabsTTS
+
+phone = Patter(carrier=Twilio(), phone_number="+15550001234")  # TWILIO_* from env
+
+agent = phone.agent(
+    stt=DeepgramSTT(endpointing_ms=80),   # DEEPGRAM_API_KEY from env
+    tts=ElevenLabsTTS(voice="rachel"),     # ELEVENLABS_API_KEY from env
+    system_prompt="You are a helpful assistant.",
+    first_message="Hi!",
+)
+
+async def main():
+    await phone.serve(agent)
+
+asyncio.run(main())
+```
+
+The same agent using namespaced imports:
+
+```python
+from getpatter.stt import deepgram
+from getpatter.tts import elevenlabs
+
+agent = phone.agent(
+    stt=deepgram.STT(endpointing_ms=80),
+    tts=elevenlabs.TTS(voice_id="rachel"),
+    system_prompt="You are a helpful assistant.",
+)
+```
+
+## Supported providers
+
+| Flat import | Namespaced import | Env var | Install extra |
+|-------------|-------------------|---------|---------------|
+| `DeepgramSTT` | `getpatter.stt.deepgram.STT` | `DEEPGRAM_API_KEY` | included |
+| `WhisperSTT` | `getpatter.stt.whisper.STT` | `OPENAI_API_KEY` | included |
+| `OpenAITranscribeSTT` | `getpatter.stt.openai_transcribe.STT` | `OPENAI_API_KEY` | included |
+| `CartesiaSTT` | `getpatter.stt.cartesia.STT` | `CARTESIA_API_KEY` | `getpatter[cartesia]` |
+| `AssemblyAISTT` | `getpatter.stt.assemblyai.STT` | `ASSEMBLYAI_API_KEY` | `getpatter[assemblyai]` |
+| `SonioxSTT` | `getpatter.stt.soniox.STT` | `SONIOX_API_KEY` | `getpatter[soniox]` |
+| `SpeechmaticsSTT` | `getpatter.stt.speechmatics.STT` | `SPEECHMATICS_API_KEY` | `getpatter[speechmatics]` |
+
+### Model enums
+
+Each provider exports a typed `StrEnum` of valid model IDs alongside the provider class. They keep `model=` arguments tab-completable and reject typos at construction time, while still accepting raw strings for forward compatibility:
+
+```python
+from getpatter.providers.deepgram_stt import DeepgramModel
+from getpatter.providers.assemblyai_stt import AssemblyAIModel
+from getpatter.providers.cartesia_stt import CartesiaSTTModel
+from getpatter.providers.soniox_stt import SonioxModel
+
+stt = DeepgramSTT(model=DeepgramModel.NOVA_3)
+```
+
+## Deepgram
+
+Streaming STT backed by Deepgram's `nova-3` model.
+
+```python
+from getpatter import DeepgramSTT
+
+stt = DeepgramSTT()                                      # reads DEEPGRAM_API_KEY
+stt = DeepgramSTT(api_key="dg_...", endpointing_ms=80)   # explicit
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | `str \| None` | `None` | API key — reads from `DEEPGRAM_API_KEY` if omitted. |
+| `language` | `str` | `"en"` | BCP-47 language code. |
+| `model` | `str` | `"nova-3"` | Deepgram model ID. |
+| `encoding` | `str` | `"linear16"` | Audio encoding sent to Deepgram. |
+| `sample_rate` | `int` | `16000` | Sample rate in Hz. |
+| `endpointing_ms` | `int` | `150` | Utterance endpointing in milliseconds. |
+| `utterance_end_ms` | `int \| None` | `1000` | Grace period after speech ends. |
+| `smart_format` | `bool` | `False` | Smart formatting (numbers, dates, punctuation). Defaults to `False` because telephony agents feed transcripts straight back into an LLM, where smart-format rewrites can confuse downstream tool-call argument parsing. Pass `smart_format=True` to opt back in. |
+| `interim_results` | `bool` | `True` | Stream interim transcripts. |
+| `vad_events` | `bool` | `True` | Emit VAD start/end markers. |
+
+## Whisper (OpenAI)
+
+HTTP-based STT via OpenAI Whisper. Reuses `OPENAI_API_KEY`.
+
+```python
+from getpatter import WhisperSTT
+
+stt = WhisperSTT()                           # reads OPENAI_API_KEY
+stt = WhisperSTT(api_key="sk-...", language="es")
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | `str \| None` | `None` | API key — reads from `OPENAI_API_KEY` if omitted. |
+| `language` | `str` | `"en"` | BCP-47 language code. |
+| `model` | `str` | `"whisper-1"` | Whisper model ID. |
+
+<Note>
+Whisper on mulaw 8 kHz routinely hallucinates short fillers (`"you"`, `"."`, `"thank you"`) and emits `is_final=true` on every chunk regardless of speech. The pipeline drops these by default plus duplicate / sub-500 ms back-to-back finals, but for production prefer `OpenAITranscribeSTT` (`gpt-4o-transcribe`) — same `OPENAI_API_KEY`, ~10× faster, no hallucination floor.
+</Note>
+
+## OpenAI Transcribe (gpt-4o-transcribe)
+
+First-class STT for OpenAI's `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` models — drop-in replacement for `WhisperSTT` with stronger multilingual quality and significantly lower latency. Reuses `OPENAI_API_KEY`.
+
+```python
+from getpatter import OpenAITranscribeSTT
+
+stt = OpenAITranscribeSTT()                                # reads OPENAI_API_KEY, defaults to gpt-4o-transcribe
+stt = OpenAITranscribeSTT(model="gpt-4o-mini-transcribe")  # cheaper variant
+stt = OpenAITranscribeSTT(api_key="sk-...", language="es")
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | `str \| None` | `None` | API key — reads from `OPENAI_API_KEY` if omitted. |
+| `language` | `str \| None` | `None` | BCP-47 language code. Auto-detect when omitted. |
+| `model` | `str` | `"gpt-4o-transcribe"` | Either `"gpt-4o-transcribe"` or `"gpt-4o-mini-transcribe"`. |
+| `response_format` | `str` | `"json"` | Pass `"verbose_json"` to expose segment-level confidence and timestamps. |
+
+## Cartesia
+
+Streaming STT using Cartesia's `ink-whisper`. See [Cartesia setup](/python-sdk/providers/cartesia).
+
+```python
+from getpatter import CartesiaSTT
+
+stt = CartesiaSTT()                          # reads CARTESIA_API_KEY
+stt = CartesiaSTT(api_key="csk_...", language="en", sample_rate=16000)
+```
+
+## AssemblyAI
+
+Universal Streaming STT via the AssemblyAI v3 WebSocket API. See [AssemblyAI setup](/python-sdk/providers/assemblyai).
+
+```python
+from getpatter import AssemblyAISTT
+
+stt = AssemblyAISTT()                        # reads ASSEMBLYAI_API_KEY
+stt = AssemblyAISTT(api_key="aa_...")
+```
+
+## Soniox
+
+Real-time STT via Soniox.
+
+```python
+from getpatter import SonioxSTT
+
+stt = SonioxSTT()                            # reads SONIOX_API_KEY
+```
+
+## Speechmatics
+
+Real-time STT via Speechmatics (Python SDK only — not yet ported to TypeScript).
+
+```python
+from getpatter.stt import speechmatics
+
+stt = speechmatics.STT()                     # reads SPEECHMATICS_API_KEY
+```
+
+## Missing credentials
+
+Each class raises `ValueError` at construction time if no API key is resolved from either `api_key=` or the matching env var:
+
+```
+ValueError: Deepgram STT requires an api_key. Pass api_key='dg_...' or
+set DEEPGRAM_API_KEY in the environment.
+```
+
+## What's Next
+
+<CardGroup cols={2}>
+  <Card title="LLM" icon="brain" href="/python-sdk/llm">Configure the language model.</Card>
+  <Card title="TTS" icon="volume" href="/python-sdk/tts">Configure speech synthesis.</Card>
+</CardGroup>

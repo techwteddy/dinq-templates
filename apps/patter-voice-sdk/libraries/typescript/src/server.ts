@@ -1,0 +1,3283 @@
+/**
+ * Embedded HTTP/WebSocket server — wires Express webhooks for the configured
+ * carrier (Twilio or Telnyx) into the per-call `StreamHandler` and dashboard.
+ */
+
+import crypto, { randomUUID } from 'node:crypto';
+import * as nodePath from 'node:path';
+import express from 'express';
+import { createServer, Server as HTTPServer } from 'http';
+import { WebSocketServer, WebSocket as WSWebSocket } from 'ws';
+import { recordCallCompleted, recordCallStarted } from './telemetry/call-metrics';
+import type { TelemetryClient } from './telemetry/client';
+import { OpenAIRealtimeAdapter } from './providers/openai-realtime';
+import { OpenAIRealtime2Adapter } from './providers/openai-realtime-2';
+import { ElevenLabsConvAIAdapter } from './providers/elevenlabs-convai';
+import { PlivoAdapter, dropPlivoVoicemail, plivoInboundCustomParams } from './providers/plivo-adapter';
+import { TwilioAdapter } from './providers/twilio-adapter';
+import { PlivoBridge, classifyPlivoAmd, validatePlivoSignature } from './telephony/plivo';
+// Re-export so existing imports from './server' keep working after the
+// extraction of PlivoBridge into ./telephony/plivo.
+export { PlivoBridge } from './telephony/plivo';
+import { createSTT } from './provider-factory';
+import type { STTAdapter } from './provider-factory';
+import { CallMetricsAccumulator } from './metrics';
+import { mergePricing } from './pricing';
+import { MetricsStore } from './dashboard/store';
+import { mountDashboard, mountApi } from './dashboard/routes';
+import { RemoteMessageHandler } from './remote-message';
+import { StreamHandler, sanitizeLogValue, buildHandoffTool } from './stream-handler';
+import { getLogger } from './logger';
+import type { TelephonyBridge } from './stream-handler';
+import type {
+  AgentOptions,
+  ToolDefinition,
+  PipelineMessageHandler,
+  MachineDetectionResult,
+  CarrierKind,
+  CallOutcome,
+  CallResult,
+  TransferCallOptions,
+  TransferCallResult,
+} from './types';
+import type { CallMetrics, CostBreakdown } from './metrics';
+import { CallLogger, resolveLogRoot } from './services/call-log';
+import { LocalCallRecorder } from './audio/call-recorder';
+
+/** Resolved configuration consumed by `EmbeddedServer` (carrier credentials, webhook URL, etc.). */
+export interface LocalConfig {
+  twilioSid?: string;
+  twilioToken?: string;
+  openaiKey?: string;
+  phoneNumber: string;
+  webhookUrl: string;
+  telephonyProvider?: CarrierKind;
+  telnyxKey?: string;
+  telnyxConnectionId?: string;
+  /** Plivo Auth ID — HTTP Basic username for the Plivo REST API. */
+  plivoAuthId?: string;
+  /** Plivo Auth Token — Basic password AND the V3 webhook signature key. */
+  plivoAuthToken?: string;
+  /**
+   * Telnyx Ed25519 public key (base64-encoded, DER/SPKI format) used to verify
+   * incoming webhook signatures. Obtain from the Telnyx portal under
+   * API Keys → Webhook Keys. When provided, unauthenticated webhook requests
+   * are rejected with HTTP 403.
+   */
+  telnyxPublicKey?: string;
+  /**
+   * SECURITY: require valid webhook signatures on both Twilio and Telnyx
+   * inbound webhooks. When True (the default), a missing credential
+   * (twilioToken / telnyxPublicKey) causes the webhook to return
+   * 503 Service Unavailable instead of silently accepting the request.
+   * Set to false only for local development against mock providers.
+   */
+  requireSignature?: boolean;
+  /**
+   * Resolved on-disk persistence root for the dashboard's call history,
+   * or ``null`` to disable. Computed by ``client.ts`` from the public
+   * ``LocalOptions.persist`` option (with ``PATTER_LOG_DIR`` env-var
+   * fallback). When ``null``, `CallLogger` is a no-op and the dashboard
+   * is in-memory-only — restarts wipe history.
+   */
+  persistRoot?: string | null;
+}
+
+type AIAdapter = OpenAIRealtimeAdapter | ElevenLabsConvAIAdapter;
+
+export const TRANSFER_CALL_TOOL = {
+  name: 'transfer_call',
+  description: 'Transfer the call to a human agent at the specified phone number',
+  parameters: {
+    type: 'object' as const,
+    properties: {
+      number: {
+        type: 'string',
+        description: 'Phone number to transfer to (E.164 format)',
+      },
+      mode: {
+        type: 'string',
+        enum: ['cold', 'warm'],
+        description:
+          "Transfer mode. 'cold' (default) redirects the caller " +
+          "immediately. 'warm' puts the caller on hold music, dials " +
+          'the human agent, announces the summary to them, then ' +
+          'bridges everyone together.',
+      },
+      summary: {
+        type: 'string',
+        description:
+          'Warm mode only — one or two sentences announced to the ' +
+          'human agent before the caller is bridged (who is calling ' +
+          'and what they need).',
+      },
+    },
+    required: ['number'],
+  },
+};
+
+export const END_CALL_TOOL = {
+  name: 'end_call',
+  description: 'End the current phone call. Use when the conversation is complete or the user says goodbye.',
+  parameters: {
+    type: 'object' as const,
+    properties: {
+      reason: {
+        type: 'string',
+        description: "Reason for ending the call (e.g., 'conversation_complete', 'user_requested', 'no_response')",
+      },
+    },
+  },
+};
+
+/**
+ * Escape a string for safe inclusion inside XML/HTML attributes or text nodes.
+ */
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Spoken to the caller when the warm-transfer target leg could not be dialed
+ * after the caller was already parked in the conference (the AI media stream
+ * is gone at that point, so a graceful goodbye beats infinite hold music).
+ * Mirrors the Python `_WARM_TRANSFER_FAILED_MESSAGE`.
+ */
+const WARM_TRANSFER_FAILED_MESSAGE =
+  'Sorry, no one is available to take your call right now. Goodbye.';
+
+/**
+ * Deterministic, per-call conference name for a Twilio warm transfer.
+ *
+ * `callSid` is validated upstream (34-char Twilio SID), so the name is safe
+ * for both TwiML attributes and REST URLs. Mirrors the Python
+ * `warm_transfer_conference_name`.
+ */
+export function warmTransferConferenceName(callSid: string): string {
+  return `patter-warm-${callSid}`;
+}
+
+/**
+ * Map a Twilio ``AnsweredBy`` value to the carrier-agnostic
+ * {@link MachineDetectionResult.classification}. Anything unrecognised
+ * collapses to ``unknown`` rather than throwing — Twilio occasionally
+ * adds new AMD outcomes (e.g. fax variants) and we don't want a webhook
+ * to 500 because of an unknown enum value.
+ */
+function classifyTwilioAmd(answeredBy: string): MachineDetectionResult['classification'] {
+  if (answeredBy === 'human') return 'human';
+  if (answeredBy.startsWith('machine_')) return 'machine';
+  if (answeredBy === 'fax') return 'fax';
+  return 'unknown';
+}
+
+/**
+ * Map a Telnyx ``call.machine.detection.ended.result`` value to the
+ * carrier-agnostic classification. Telnyx uses ``human`` / ``machine``
+ * (and historically ``machine_detected``) / ``not_sure`` / ``fax``.
+ */
+function classifyTelnyxAmd(result: string): MachineDetectionResult['classification'] {
+  if (result === 'human') return 'human';
+  if (result === 'machine' || result === 'machine_detected') return 'machine';
+  if (result === 'fax') return 'fax';
+  return 'unknown';
+}
+
+/**
+ * Map a no-media Twilio terminal ``CallStatus`` to a {@link CallResult}
+ * outcome. Only called for statuses that imply the call never reached the
+ * media stream (``no-answer`` / ``busy`` / ``failed`` / ``canceled``);
+ * connected calls resolve via ``onCallEnd`` instead. Mirrors Python's
+ * ``_twilio_status_to_outcome``.
+ */
+export function twilioStatusToOutcome(callStatus: string): CallOutcome {
+  const s = (callStatus || '').toLowerCase();
+  if (s === 'no-answer') return 'no_answer';
+  if (s === 'busy') return 'busy';
+  return 'failed'; // failed / canceled / any other terminal no-media status
+}
+
+/**
+ * Map a Telnyx ``hangup_cause`` to a no-media {@link CallResult} outcome, or
+ * ``null`` when the cause implies the call connected (``normal_clearing``).
+ *
+ * Connected calls return ``null`` here so they resolve via ``onCallEnd`` with
+ * the full transcript + metrics rather than being prematurely closed as a
+ * no-media outcome. Mirrors Python's ``_telnyx_hangup_outcome``.
+ */
+export function telnyxHangupOutcome(cause: string): CallOutcome | null {
+  const c = (cause || '').toLowerCase();
+  if (c === 'no_answer' || c === 'timeout' || c === 'no_user_response') return 'no_answer';
+  if (c === 'user_busy' || c === 'busy') return 'busy';
+  if (c === 'call_rejected' || c === 'rejected' || c === 'destination_out_of_order') return 'failed';
+  return null;
+}
+
+/**
+ * Validate that a webhook URL is safe to fetch (SSRF protection).
+ *
+ * Blocks:
+ *   - Non-HTTP(S) schemes (``file:``, ``javascript:``, etc.)
+ *   - IPv4 private, loopback, link-local, reserved ranges
+ *     (127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, 0/8)
+ *   - IPv6 loopback and aliases (``::1``, ``::``, ``ip6-localhost``,
+ *     ``ip6-loopback``), unique-local (``fc00::/7``) and link-local
+ *     (``fe80::/10``) ranges
+ *   - Localhost hostnames (``localhost``) and cloud-metadata hostnames
+ *     (``metadata``, ``metadata.google.internal``, ``metadata.azure.com``)
+ *
+ * Mirrors Python's ``ipaddress.ip_address(...).is_private /
+ * .is_loopback / .is_link_local / .is_reserved`` behaviour.
+ *
+ * URLs validated here are SDK-user config, not caller-derived input. When
+ * *allowLoopback* is ``true`` (opt-in, consult tool only) the loopback /
+ * private / link-local rejections AND the cloud-metadata hostname block are
+ * skipped, letting a developer point at a trusted local agent. The scheme
+ * check is NEVER relaxed — non-HTTP(S) URLs are always rejected. Every other
+ * caller relies on the strict default (``allowLoopback = false``).
+ *
+ * @param url            The webhook URL to validate.
+ * @param allowLoopback  Opt-in: permit loopback/private/link-local hosts
+ *                       (default ``false`` — strict SSRF guard).
+ */
+export function validateWebhookUrl(url: string, allowLoopback = false): void {
+  const parsed = new URL(url);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`Invalid webhook URL scheme: ${parsed.protocol}`);
+  }
+  // Node's URL parser preserves IPv6 brackets on ``hostname`` — strip them so
+  // raw IPv6 literal checks can match. Lowercase for case-insensitive
+  // hostname/IP comparisons (hex digits are case-insensitive in IPv6).
+  const rawHost = parsed.hostname;
+  const host = rawHost.replace(/^\[/, '').replace(/\]$/, '').toLowerCase();
+
+  // ``allowLoopback`` is an opt-in escape hatch for trusted, developer-
+  // configured local agents (the consult tool). It relaxes the loopback /
+  // private / link-local rejections below but NEVER the scheme check above —
+  // a developer-specified URL is still not allowed to be ``file:`` etc. Every
+  // other caller passes the strict default (``false``).
+  if (allowLoopback) {
+    return;
+  }
+
+  // --- Blocked hostnames (case-insensitive, exact match) ------------------
+  const BLOCKED_HOSTNAMES = new Set([
+    'localhost',
+    'ip6-localhost',
+    'ip6-loopback',
+    'metadata',
+    'metadata.google.internal',
+    'metadata.azure.com',
+  ]);
+  if (BLOCKED_HOSTNAMES.has(host)) {
+    throw new Error(`Webhook URL blocked: ${rawHost} is a private/internal address`);
+  }
+
+  // --- IPv4 literal checks ------------------------------------------------
+  const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+  const v4 = IPV4_RE.exec(host);
+  if (v4) {
+    const oct = v4.slice(1, 5).map((s) => parseInt(s, 10));
+    if (oct.some((n) => n < 0 || n > 255)) {
+      throw new Error(`Webhook URL blocked: ${rawHost} is not a valid IPv4 address`);
+    }
+    const [a, b] = oct;
+    if (
+      a === 0 ||                              // 0.0.0.0/8 (any 0.x)
+      a === 10 ||                             // 10.0.0.0/8
+      a === 127 ||                            // 127.0.0.0/8 loopback
+      (a === 169 && b === 254) ||             // 169.254.0.0/16 link-local
+      (a === 172 && b >= 16 && b <= 31) ||    // 172.16.0.0/12
+      (a === 192 && b === 168)                // 192.168.0.0/16
+    ) {
+      throw new Error(`Webhook URL blocked: ${rawHost} is a private/internal address`);
+    }
+    return;
+  }
+
+  // --- IPv6 literal checks (after bracket strip) --------------------------
+  // Heuristic detection: IPv6 literals contain ':'.
+  if (host.includes(':')) {
+    // Loopback / unspecified
+    if (host === '::1' || host === '::') {
+      throw new Error(`Webhook URL blocked: ${rawHost} is a private/internal address`);
+    }
+    // Unique local fc00::/7 — first hex group starts with "fc" or "fd"
+    if (/^fc[0-9a-f]{0,2}:/.test(host) || /^fd[0-9a-f]{0,2}:/.test(host)) {
+      throw new Error(`Webhook URL blocked: ${rawHost} is a private/internal address`);
+    }
+    // Link-local fe80::/10 — first hex group in [fe80, febf]
+    if (/^fe[89ab][0-9a-f]?:/.test(host)) {
+      throw new Error(`Webhook URL blocked: ${rawHost} is a private/internal address`);
+    }
+  }
+}
+
+/**
+ * Reduce a host value (bare hostname, ``host:port``, or a full URL) to its
+ * lowercase hostname with any IPv6 brackets stripped. Returns ``''`` when the
+ * input is empty. Used by the dashboard exposure check, which receives the
+ * carrier ``webhookUrl`` (already a bare host) and the ``PATTER_BIND_HOST``
+ * env var (a bare host or IP).
+ */
+export function extractHost(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  let host = trimmed.replace(/^[a-z]+:\/\//i, '').replace(/\/.*$/, '');
+  // Bracketed IPv6 literal, optionally with a trailing port: ``[::1]`` or
+  // ``[::1]:8000``. Take everything between the brackets and drop the port.
+  if (host.startsWith('[')) {
+    return host.slice(1).split(']', 1)[0].toLowerCase();
+  }
+  // Strip a trailing ``:port`` for IPv4 / hostname. A bare IPv6 literal
+  // (``::1``) has many colons and no port, so it must not be split.
+  if (!host.includes('::')) {
+    const lastColon = host.lastIndexOf(':');
+    if (lastColon !== -1 && /^\d+$/.test(host.slice(lastColon + 1))) {
+      host = host.slice(0, lastColon);
+    }
+  }
+  return host.toLowerCase();
+}
+
+/** True when ``host`` is a loopback indicator (127.0.0.0/8, localhost, ::1). */
+export function isLoopbackHost(value: string): boolean {
+  const host = extractHost(value);
+  if (!host) return false;
+  if (host === 'localhost' || host === 'ip6-localhost' || host === 'ip6-loopback') {
+    return true;
+  }
+  if (host === '::1' || host === '::ffff:127.0.0.1') return true;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4) {
+    return parseInt(v4[1], 10) === 127; // 127.0.0.0/8
+  }
+  return false;
+}
+
+/**
+ * Validate a Telnyx webhook request signature using Ed25519.
+ *
+ * Telnyx signs the raw request body with an Ed25519 private key and includes
+ * the base64-encoded signature in the ``telnyx-signature-ed25519`` header and
+ * a Unix millisecond timestamp in ``telnyx-timestamp``.
+ *
+ * The signed payload is: timestamp + "|" + rawBody
+ *
+ * @param rawBody     Raw (unparsed) request body string
+ * @param signature   Value of the ``telnyx-signature-ed25519`` header
+ * @param timestamp   Value of the ``telnyx-timestamp`` header
+ * @param publicKey   Ed25519 public key provided by Telnyx (base64-encoded)
+ * @param toleranceSec Maximum age of the request in seconds (default 300)
+ * @returns true if valid, false otherwise
+ */
+// Maximum tolerated clock skew for a Telnyx webhook timestamp that is in the
+// FUTURE relative to the local clock. Must match Python server.py
+// ``_TELNYX_FUTURE_SKEW_MS`` (SDK parity).
+const TELNYX_FUTURE_SKEW_MS = 30_000;
+
+function validateTelnyxSignature(
+  rawBody: string,
+  signature: string,
+  timestamp: string,
+  publicKey: string,
+  toleranceSec = 300,
+): boolean {
+
+  try {
+    // Reject if timestamp is missing or too old (replay attack protection).
+    // Telnyx sends ``telnyx-timestamp`` as seconds since epoch (per docs:
+    // https://developers.telnyx.com/docs/messaging/webhooks#webhook-signing).
+    // Heuristic: any value below 1e12 is seconds (a 2026 epoch in seconds is
+    // ~1.77e9, while milliseconds is ~1.77e12), so we promote to ms before
+    // comparing. This stays correct if Telnyx ever switches the unit.
+    const ts = parseInt(timestamp, 10);
+    if (!Number.isFinite(ts)) return false;
+    const tsMs = ts < 1e12 ? ts * 1000 : ts;
+    const ageMs = Date.now() - tsMs;
+    // Past-dated timestamps get the standard anti-replay tolerance. Future
+    // timestamps are tolerated only up to a small clock-skew allowance
+    // (local clock a touch behind Telnyx) — rejecting ALL future values
+    // (the previous behaviour) drops legitimate webhooks on hosts whose
+    // clock lags by even a second. Mirrors Python ``_TELNYX_FUTURE_SKEW_MS``.
+    if (ageMs > toleranceSec * 1000 || ageMs < -TELNYX_FUTURE_SKEW_MS) return false;
+
+    const payload = `${timestamp}|${rawBody}`;
+    const rawKey = Buffer.from(publicKey, 'base64');
+
+    // The Telnyx portal issues TELNYX_PUBLIC_KEY as base64 of the RAW
+    // 32-byte Ed25519 key (their own SDKs feed it straight to NaCl). Only
+    // accepting DER/SPKI meant every webhook 403'd (fail-closed) the moment
+    // the documented security feature was enabled. Wrap raw keys in the
+    // 12-byte Ed25519 SPKI prefix so createPublicKey accepts both forms.
+    const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+    const keyBuffer =
+      rawKey.length === 32 ? Buffer.concat([ED25519_SPKI_PREFIX, rawKey]) : rawKey;
+
+    // Node 15+ supports Ed25519 natively via createPublicKey / verify
+    const keyObject = crypto.createPublicKey({
+      key: keyBuffer,
+      format: 'der',
+      type: 'spki',
+    });
+
+    // The telnyx-signature-ed25519 header may contain multiple comma-separated
+    // signatures during key rotation. Accept the webhook if any one of them
+    // verifies; fail-closed when none match (mirrors Python server.py:69-81).
+    for (const rawSig of signature.split(',')) {
+      const trimmed = rawSig.trim();
+      if (!trimmed) continue;
+      try {
+        const sigBuffer = Buffer.from(trimmed, 'base64');
+        if (crypto.verify(null, Buffer.from(payload), keyObject, sigBuffer)) {
+          return true;
+        }
+      } catch {
+        // Malformed signature entry — try the next one.
+        continue;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validate a Twilio SID (CallSid etc.) to prevent path traversal / injection
+ * when interpolating into Twilio API URLs. Twilio SIDs are 34 characters:
+ * a two-letter prefix (e.g. 'CA' for calls) followed by 32 hex characters.
+ */
+export function validateTwilioSid(sid: string, prefix = 'CA'): boolean {
+  return sid.length === 34 && sid.startsWith(prefix) && /^[A-Z]{2}[0-9a-f]{32}$/.test(sid);
+}
+
+/**
+ * Validate a Twilio webhook request signature using HMAC-SHA1.
+ * Returns true if the signature is valid, false otherwise.
+ */
+function validateTwilioSignature(
+  url: string,
+  params: Record<string, string>,
+  signature: string,
+  authToken: string,
+): boolean {
+
+  const data = url + Object.keys(params).sort().reduce((acc, key) => acc + key + (params[key] ?? ''), '');
+  const expected = crypto.createHmac('sha1', authToken).update(data).digest('base64');
+  try {
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    // timingSafeEqual throws when buffer lengths differ. Compare lengths
+    // explicitly first — buffer length is not a secret, so an early return
+    // on mismatch does not leak timing information about the secret itself.
+    if (sigBuf.length !== expBuf.length) return false;
+    return crypto.timingSafeEqual(sigBuf, expBuf);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sanitise an untrusted key/value map by stripping keys that could enable
+ * prototype pollution (__proto__, constructor, prototype) and ensuring all
+ * values are strings. Returns a clean plain object with no inherited props.
+ */
+export function sanitizeVariables(raw: Record<string, unknown>): Record<string, string> {
+  const BLOCKED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+  const safe: Record<string, string> = Object.create(null);
+  for (const key of Object.keys(raw)) {
+    if (BLOCKED_KEYS.has(key)) continue;
+    const val = raw[key];
+    // Strip control characters and cap length — caller-supplied values
+    // (carrier custom params) are interpolated into the system prompt, so a
+    // newline-bearing value could append adversarial prompt lines. Mirrors
+    // Python ``_sanitize_variable_value`` (same regex, same 500-char cap).
+    safe[key] = (typeof val === 'string' ? val : String(val ?? ''))
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x1f\x7f]/g, '')
+      .slice(0, 500);
+  }
+  return safe;
+}
+
+/**
+ * Replace ``{key}`` placeholders in a template string with values from the
+ * provided variables map.
+ */
+export function resolveVariables(template: string, variables: Record<string, string>): string {
+  let result = template;
+  for (const [key, value] of Object.entries(variables)) {
+    result = result.replaceAll(`{${key}}`, value);
+  }
+  return result;
+}
+
+/**
+ * Build an AI adapter (OpenAI Realtime or ElevenLabs ConvAI) for a call.
+ * Credentials come from the engine instance attached to ``agent.engine``
+ * (v0.5.0+). OpenAI falls back to ``config.openaiKey`` when no engine is set.
+ */
+export function buildAIAdapter(config: LocalConfig, agent: AgentOptions, resolvedPrompt?: string, toolsOverride?: readonly ToolDefinition[]): AIAdapter {
+  const engine = agent.engine;
+  if (agent.provider === 'elevenlabs_convai') {
+    if (!engine || engine.kind !== 'elevenlabs_convai') {
+      throw new Error(
+        "ElevenLabs ConvAI mode requires `agent.engine = new ElevenLabsConvAI({...})`.",
+      );
+    }
+    // Options form with carrier-native formats: the positional form sent
+    // no tts.output_format override, so ConvAI streamed its server default
+    // (PCM16 @16 kHz) onto a mulaw-8kHz carrier wire — loud static unless
+    // the user happened to set ulaw_8000 in the ElevenLabs dashboard. All
+    // three carriers negotiate mulaw 8 kHz here (Telnyx via PCMU).
+    return new ElevenLabsConvAIAdapter({
+      apiKey: engine.apiKey,
+      agentId: engine.agentId,
+      // Only the engine's explicit voice — agent.voice defaults to the
+      // OpenAI voice name 'alloy', which is not an ElevenLabs voice_id.
+      voiceId: engine.voice,
+      firstMessage: agent.firstMessage ?? '',
+      outputAudioFormat: 'ulaw_8000',
+      inputAudioFormat: 'ulaw_8000',
+    });
+  }
+  // Always inject transfer_call and end_call system tools alongside agent-defined tools.
+  // ``strict`` is propagated when the user opts in — Patter does not flip it on
+  // by default because OpenAI strict mode requires every property in ``required``
+  // and ``additionalProperties: false`` everywhere, which would break tools with
+  // optional fields. The user's tool schemas are validated at agent() build time
+  // (see tools/schema-validation.ts) so any strict-mode violation surfaces early.
+  // ``toolsOverride`` carries the per-call resolved tool list (MCP + consult
+  // merges from the stream handler) so those tools are advertised to the
+  // Realtime model; falls back to the static ``agent.tools``.
+  //
+  // When ``toolCallPreambles`` is on AND a tool declares a ``reassurance``
+  // string, append it as a "Preamble sample phrases" hint to a COPY of that
+  // tool's description (never mutating the frozen agent/tool). This is an
+  // optional, non-breaking nicety — it gives the model a concrete sample
+  // opener for that specific slow tool.
+  const preamblesOn = Boolean((agent as { toolCallPreambles?: boolean | string }).toolCallPreambles);
+  const agentTools = (toolsOverride ?? agent.tools)?.map((t) => {
+    let description = t.description;
+    const reassurance = (t as { reassurance?: string | { message: string } }).reassurance;
+    const sample = typeof reassurance === 'string' ? reassurance : undefined;
+    if (preamblesOn && sample) {
+      description = `${description}\n\nPreamble sample phrases:\n- ${sample}`;
+    }
+    return {
+      name: t.name,
+      description,
+      parameters: t.parameters,
+      strict: (t as { strict?: boolean }).strict,
+    };
+  }) ?? [];
+  const tools: Array<{ name: string; description: string; parameters: Record<string, unknown>; strict?: boolean }> =
+    [...agentTools, TRANSFER_CALL_TOOL, END_CALL_TOOL];
+  // Multi-agent handoff: advertise the built-in ``handoff_to`` tool when the
+  // agent has handoff targets configured. Dispatched by the stream handler
+  // (see ``handleHandoffFunctionCall``). Mirrors the Python Realtime
+  // ``start()`` tool construction.
+  const handoffNames = agent.handoffs ? Object.keys(agent.handoffs) : [];
+  if (handoffNames.length > 0) {
+    tools.push(buildHandoffTool(handoffNames));
+  }
+  const isOpenAIEngine = engine && (engine.kind === 'openai_realtime' || engine.kind === 'openai_realtime_2');
+  const openaiKey = isOpenAIEngine ? engine.apiKey : (config.openaiKey ?? '');
+  // Forward optional engine-level Realtime knobs so the high-level
+  // ``OpenAIRealtime`` / ``OpenAIRealtime2`` engine wrappers have the same
+  // expressivity as the underlying adapters. Omitting the option keeps the
+  // adapter's own defaults — backward compat with users on the prior shape.
+  const adapterOptions: import('./providers/openai-realtime').OpenAIRealtimeOptions = {};
+  if (isOpenAIEngine) {
+    if (engine.reasoningEffort !== undefined) {
+      adapterOptions.reasoningEffort = engine.reasoningEffort;
+    }
+    if (engine.inputAudioTranscriptionModel !== undefined) {
+      adapterOptions.inputAudioTranscriptionModel = engine.inputAudioTranscriptionModel;
+    }
+    if (engine.noiseReduction !== undefined) {
+      adapterOptions.noiseReduction = engine.noiseReduction;
+    }
+    if (engine.turnDetection !== undefined) {
+      adapterOptions.turnDetection = engine.turnDetection;
+    }
+    if (engine.gateResponseOnTranscript !== undefined) {
+      adapterOptions.gateResponseOnTranscript = engine.gateResponseOnTranscript;
+    }
+  }
+  // Forward noise reduction and turn detection from the agent options (which
+  // already carry the merged engine-marker + agent() kwarg value via
+  // client.ts Patter.agent()). These override whatever the engine marker set.
+  const agentOpts = agent as {
+    openaiRealtimeNoiseReduction?: 'near_field' | 'far_field';
+    realtimeTurnDetection?: import('./types').RealtimeTurnDetection;
+    openaiRealtimeGateResponseOnTranscript?: boolean;
+  };
+  if (agentOpts.openaiRealtimeNoiseReduction !== undefined) {
+    adapterOptions.noiseReduction = agentOpts.openaiRealtimeNoiseReduction;
+  }
+  if (agentOpts.realtimeTurnDetection !== undefined) {
+    adapterOptions.turnDetection = agentOpts.realtimeTurnDetection;
+  }
+  if (agentOpts.openaiRealtimeGateResponseOnTranscript !== undefined) {
+    adapterOptions.gateResponseOnTranscript =
+      agentOpts.openaiRealtimeGateResponseOnTranscript;
+  }
+  // Both the v1 ``OpenAIRealtime()`` engine and the GA ``OpenAIRealtime2()``
+  // engine (plus the legacy no-engine OpenAI path) route through the GA
+  // adapter. OpenAI deprecated the Beta Realtime API: the legacy flat
+  // ``output_audio_format: g711_ulaw`` session shape is ignored by GA models
+  // (the v1 engine defaults to ``gpt-realtime-mini``, a GA model), which then
+  // fall back to PCM16 @ 24 kHz. The old v1-beta adapter forwarded those bytes
+  // to Twilio framed as 8 kHz mulaw, producing static + broken STT (issue
+  // #154). The GA adapter sends the nested
+  // ``audio.{input,output}.format = {type:'audio/pcm',rate:24000}`` shape and
+  // transcodes PCM24→mulaw8 internally, so the carrier always receives valid
+  // mulaw. Only the default model differs (carried on ``agent.model``:
+  // gpt-realtime-mini vs gpt-realtime-2). Mirrors the Python SDK, which already
+  // unified this routing in ``stream_handler.py``. ``OpenAIRealtimeAdapter``
+  // stays only as the shared base class — the GA adapter extends it, so the
+  // ``instanceof OpenAIRealtimeAdapter`` feature gates in the stream handler
+  // keep firing.
+  const AdapterCtor = OpenAIRealtime2Adapter;
+  return new AdapterCtor(
+    openaiKey,
+    agent.model,
+    agent.voice,
+    resolvedPrompt ?? agent.systemPrompt,
+    tools,
+    undefined,
+    adapterOptions,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Telephony bridge implementations
+// ---------------------------------------------------------------------------
+
+/** Twilio-specific telephony bridge. */
+export class TwilioBridge implements TelephonyBridge {
+  readonly label = 'Twilio';
+  readonly telephonyProvider = 'twilio' as const;
+  readonly inputWireFormat = 'ulaw_8000' as const;
+
+  constructor(private readonly config: LocalConfig) {}
+
+  sendAudio(ws: WSWebSocket, audioBase64: string, streamSid: string): void {
+    ws.send(JSON.stringify({ event: 'media', streamSid, media: { payload: audioBase64 } }));
+  }
+
+  sendMark(ws: WSWebSocket, markName: string, streamSid: string): void {
+    ws.send(JSON.stringify({ event: 'mark', streamSid, mark: { name: markName } }));
+  }
+
+  sendClear(ws: WSWebSocket, streamSid: string): void {
+    ws.send(JSON.stringify({ event: 'clear', streamSid }));
+  }
+
+  async transferCall(
+    callId: string,
+    toNumber: string,
+    options?: TransferCallOptions,
+  ): Promise<TransferCallResult | void> {
+    if (options?.mode === 'warm') {
+      // Conference-based warm transfer: park the caller on hold, dial the
+      // human with the announced summary, bridge on answer. The AI media
+      // stream ends when the caller's TwiML is replaced. Returns a result /
+      // error envelope (never throws). Mirrors Python `twilio_warm_transfer`.
+      return this.warmTransfer(callId, toNumber, options.summary ?? '');
+    }
+    // Cold mode: byte-identical to the historical blind redirect.
+    if (this.config.twilioSid && this.config.twilioToken && callId) {
+      if (!validateTwilioSid(callId)) {
+        getLogger().warn(`TwilioBridge.transferCall rejected: invalid CallSid ${JSON.stringify(callId)}`);
+        return;
+      }
+      const E164_RE = /^\+[1-9]\d{6,14}$/;
+      if (!E164_RE.test(toNumber)) {
+        getLogger().warn(`TwilioBridge.transferCall rejected: invalid target ${JSON.stringify(toNumber)}`);
+        return;
+      }
+      const transferUrl = `https://api.twilio.com/2010-04-01/Accounts/${this.config.twilioSid}/Calls/${callId}.json`;
+      await fetch(transferUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${Buffer.from(`${this.config.twilioSid}:${this.config.twilioToken}`).toString('base64')}`,
+        },
+        body: new URLSearchParams({ Twiml: `<Response><Dial>${xmlEscape(toNumber)}</Dial></Response>` }).toString(),
+      });
+      getLogger().info(`Call transferred to ${toNumber}`);
+    }
+  }
+
+  /**
+   * Execute the Twilio conference-based WARM transfer REST sequence.
+   *
+   * 1. Redirect the caller's live call into a named conference
+   *    (`startConferenceOnEnter=false` → the caller hears Twilio's default
+   *    hold music). This replaces the `<Connect><Stream>` TwiML, so Twilio
+   *    tears down the AI media stream automatically — the "AI leg" ends here.
+   * 2. Dial the human agent (`Calls.json` create) with TwiML that first
+   *    speaks `summary` (`<Say>`), then joins the same conference with
+   *    `startConferenceOnEnter=true` — bridging caller and human.
+   *
+   * When `config.webhookUrl` is set, conference lifecycle events are posted
+   * to `/webhooks/twilio/conference` and the target leg's terminal status to
+   * `/webhooks/twilio/warm-status?caller_call_sid=...` (which gracefully
+   * releases a caller stuck on hold when the human never answers).
+   *
+   * Returns `{ status: 'transferring', mode: 'warm', ... }` on success or an
+   * `{ error }` envelope on validation/REST failure. Never throws. Mirrors
+   * the Python `twilio_warm_transfer` sequence and envelopes exactly.
+   */
+  private async warmTransfer(
+    callId: string,
+    toNumber: string,
+    summary: string,
+  ): Promise<TransferCallResult> {
+    const E164_RE = /^\+[1-9]\d{6,14}$/;
+    if (!E164_RE.test(toNumber)) {
+      getLogger().warn(`warm transfer rejected: invalid number ${JSON.stringify(toNumber)}`);
+      return { error: 'Invalid phone number format', status: 'rejected' };
+    }
+    if (!this.config.twilioSid || !this.config.twilioToken || !callId) {
+      return { error: 'warm transfer not available: missing Twilio credentials' };
+    }
+    if (!validateTwilioSid(callId)) {
+      getLogger().warn(`warm transfer skipped: invalid CallSid ${JSON.stringify(callId)}`);
+      return { error: 'warm transfer not available: invalid CallSid' };
+    }
+    // Twilio requires a verified / Twilio-owned From for the new leg.
+    const fromNumber = this.config.phoneNumber ?? '';
+    if (!E164_RE.test(fromNumber)) {
+      getLogger().warn(`warm transfer rejected: no valid From number (got ${JSON.stringify(fromNumber)})`);
+      return { error: 'warm transfer not available: no valid agent number to dial from' };
+    }
+
+    const conference = warmTransferConferenceName(callId);
+    const webhookHost = this.config.webhookUrl ?? '';
+    const conferenceCallback = webhookHost
+      ? `https://${webhookHost}/webhooks/twilio/conference`
+      : '';
+    const callerTwiml = TwilioAdapter.generateWarmTransferCallerTwiml(conference, conferenceCallback);
+    const targetTwiml = TwilioAdapter.generateWarmTransferTargetTwiml(conference, summary);
+
+    const apiBase = `https://api.twilio.com/2010-04-01/Accounts/${this.config.twilioSid}`;
+    const authHeader = `Basic ${Buffer.from(`${this.config.twilioSid}:${this.config.twilioToken}`).toString('base64')}`;
+
+    // Step 1 — park the caller in the conference (replaces the media stream
+    // TwiML; the AI leg ends with it).
+    try {
+      const resp = await fetch(`${apiBase}/Calls/${callId}.json`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': authHeader,
+        },
+        body: new URLSearchParams({ Twiml: callerTwiml }).toString(),
+      });
+      if (resp.status >= 400) {
+        getLogger().warn(`warm transfer: conference redirect failed (HTTP ${resp.status})`);
+        return { error: 'warm transfer failed: could not place caller on hold' };
+      }
+    } catch (err) {
+      getLogger().warn(`warm transfer: conference redirect failed: ${(err as Error)?.message ?? err}`);
+      return { error: 'warm transfer failed: could not place caller on hold' };
+    }
+
+    // Step 2 — dial the human agent into the conference with the
+    // announcement leg.
+    const dialData: Record<string, string> = {
+      To: toNumber,
+      From: fromNumber,
+      Twiml: targetTwiml,
+    };
+    if (webhookHost) {
+      dialData.StatusCallback =
+        `https://${webhookHost}/webhooks/twilio/warm-status` +
+        `?caller_call_sid=${encodeURIComponent(callId)}`;
+      dialData.StatusCallbackEvent = 'completed';
+    }
+    let dialFailed = false;
+    try {
+      const resp = await fetch(`${apiBase}/Calls.json`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': authHeader,
+        },
+        body: new URLSearchParams(dialData).toString(),
+      });
+      dialFailed = resp.status >= 400;
+      if (dialFailed) {
+        getLogger().warn(`warm transfer: target dial failed (HTTP ${resp.status})`);
+      }
+    } catch (err) {
+      getLogger().warn(`warm transfer: target dial failed: ${(err as Error)?.message ?? err}`);
+      dialFailed = true;
+    }
+
+    if (dialFailed) {
+      // The caller is already parked on hold and the AI stream is gone —
+      // release them gracefully instead of leaving infinite hold music.
+      try {
+        await fetch(`${apiBase}/Calls/${callId}.json`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': authHeader,
+          },
+          body: new URLSearchParams({
+            Twiml: `<Response><Say>${xmlEscape(WARM_TRANSFER_FAILED_MESSAGE)}</Say><Hangup/></Response>`,
+          }).toString(),
+        });
+      } catch (err) {
+        getLogger().warn(`warm transfer: caller recovery failed: ${(err as Error)?.message ?? err}`);
+      }
+      return { error: 'warm transfer failed: could not dial the transfer target' };
+    }
+
+    getLogger().info(`Warm transfer started: caller parked in ${conference}, dialing ${toNumber}`);
+    return { status: 'transferring', mode: 'warm', to: toNumber, conference };
+  }
+
+  async endCall(callId: string, _ws: WSWebSocket): Promise<void> {
+    if (this.config.twilioSid && this.config.twilioToken && callId) {
+      if (!validateTwilioSid(callId)) {
+        getLogger().warn(`TwilioBridge.endCall rejected: invalid CallSid ${JSON.stringify(callId)}`);
+        return;
+      }
+      const endUrl = `https://api.twilio.com/2010-04-01/Accounts/${this.config.twilioSid}/Calls/${callId}.json`;
+      await fetch(endUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${Buffer.from(`${this.config.twilioSid}:${this.config.twilioToken}`).toString('base64')}`,
+        },
+        body: new URLSearchParams({ Status: 'completed' }).toString(),
+      });
+    }
+  }
+
+  createStt(agent: AgentOptions): Promise<STTAdapter | null> {
+    // In v0.5.0+ the adapter is pre-instantiated and already configured for
+    // the transcoded pipeline stream (PCM16 16 kHz). Transcoding happens in
+    // ``StreamHandler.handleAudio``.
+    return createSTT(agent);
+  }
+
+  async queryTelephonyCost(metricsAcc: CallMetricsAccumulator, callId: string): Promise<void> {
+    if (this.config.twilioSid && this.config.twilioToken && callId) {
+      if (!validateTwilioSid(callId)) {
+        getLogger().warn(`TwilioBridge.queryTelephonyCost rejected: invalid CallSid ${JSON.stringify(callId)}`);
+        return;
+      }
+      try {
+        const resp = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${this.config.twilioSid}/Calls/${callId}.json`,
+          {
+            headers: {
+              'Authorization': `Basic ${Buffer.from(`${this.config.twilioSid}:${this.config.twilioToken}`).toString('base64')}`,
+            },
+            signal: AbortSignal.timeout(5000),
+          },
+        );
+        if (resp.ok) {
+          const data = await resp.json() as { price?: string };
+          if (data.price != null) {
+            metricsAcc.setActualTelephonyCost(Math.abs(parseFloat(data.price)));
+            getLogger().info(`Twilio actual cost: $${Math.abs(parseFloat(data.price))}`);
+          }
+        }
+      } catch (err) {
+        // Fallback to estimated cost. Mirrors Py handlers/twilio_handler.py:538-539.
+        getLogger().debug(
+          `queryTelephonyCost(twilio) failed: ${(err as Error)?.message ?? err}`,
+        );
+      }
+    }
+  }
+}
+
+/** Accept E.164 phone numbers and SIP(s) URIs as Telnyx transfer targets. */
+function isValidTelnyxTransferTarget(target: string): boolean {
+  if (typeof target !== 'string' || !target) return false;
+  if (/^\+[1-9]\d{6,14}$/.test(target)) return true;
+  return /^sips?:[^\s@]+(@[^\s]+)?$/i.test(target);
+}
+
+/**
+ * DTMF digits accepted by the Telnyx `send_dtmf` command.
+ *
+ * ``w`` / ``W`` are Telnyx-specific pause characters (each inserts a 500 ms
+ * wait before the next digit). They are sent as-is in the ``digits`` payload
+ * — Telnyx interprets them server-side. Mirrors the Python ``_DTMF_ALLOWED``
+ * set in ``libraries/python/getpatter/handlers/telnyx_handler.py``.
+ */
+const TELNYX_DTMF_ALLOWED = new Set('0123456789*#ABCDabcdwW');
+const TELNYX_DTMF_DURATION_MS = 250;
+
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Telnyx-specific telephony bridge. */
+export class TelnyxBridge implements TelephonyBridge {
+  readonly label = 'Telnyx';
+  readonly telephonyProvider = 'telnyx' as const;
+  // ``streaming_start`` negotiates PCMU bidirectional by default — keeping
+  // ``ulaw_8000`` here matches what TwilioBridge does and keeps the stream
+  // handler's input-transcode branch in the right shape. If a deployment
+  // overrides the negotiation to L16, this should flip to ``pcm_16000``.
+  readonly inputWireFormat = 'ulaw_8000' as const;
+
+  constructor(private readonly config: LocalConfig) {}
+
+  sendAudio(ws: WSWebSocket, audioBase64: string, _streamSid: string): void {
+    // BUG #18 — Telnyx media-stream outbound wire format is
+    // ``{"event":"media","media":{"payload":b64}}``, not the legacy
+    // ``event_type``/``payload.audio.chunk`` shape.
+    ws.send(JSON.stringify({ event: 'media', media: { payload: audioBase64 } }));
+  }
+
+  sendMark(_ws: WSWebSocket, _markName: string, _streamSid: string): void {
+    // Telnyx does not support mark events — no-op
+  }
+
+  sendClear(ws: WSWebSocket, _streamSid: string): void {
+    // BUG #18 — matching clear signal.
+    ws.send(JSON.stringify({ event: 'clear' }));
+  }
+
+  async transferCall(
+    callId: string,
+    toNumber: string,
+    options?: TransferCallOptions,
+  ): Promise<TransferCallResult | void> {
+    // ``mode: 'warm'`` is NOT yet implemented on Telnyx — the Call Control
+    // conference flow requires a second outbound leg (connection_id +
+    // answer-webhook coordination) that the bridge does not plumb today. A
+    // clear error envelope is returned so the agent keeps the call instead
+    // of silently degrading to a blind redirect. Mirrors the Python
+    // ``_telnyx_transfer`` behaviour.
+    if (options?.mode === 'warm') {
+      getLogger().warn('warm transfer requested but not yet supported on telnyx');
+      return { error: 'warm transfer not yet supported on telnyx' };
+    }
+    if (!isValidTelnyxTransferTarget(toNumber)) {
+      getLogger().warn(`TelnyxBridge.transferCall rejected: invalid target ${JSON.stringify(toNumber)}`);
+      return;
+    }
+    const telnyxKey = this.config.telnyxKey ?? '';
+    // Opt-in client_state: an opaque context string Telnyx base64-encodes and
+    // echoes on the transferred leg's subsequent webhooks. Omitted by default
+    // so the request body stays byte-identical to the historical contract.
+    const body: Record<string, string> = { to: toNumber };
+    if (options?.clientState) {
+      body.client_state = Buffer.from(options.clientState, 'utf-8').toString('base64');
+    }
+    await fetch(`https://api.telnyx.com/v2/calls/${encodeURIComponent(callId)}/actions/transfer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${telnyxKey}` },
+      body: JSON.stringify(body),
+    });
+    getLogger().info(`Telnyx call transferred to ${toNumber}`);
+  }
+
+  async sendDtmf(_ws: WSWebSocket, callId: string, digits: string, delayMs: number): Promise<void> {
+    if (!digits) {
+      getLogger().warn('TelnyxBridge.sendDtmf called with empty digits');
+      return;
+    }
+    const telnyxKey = this.config.telnyxKey ?? '';
+    if (!telnyxKey || !callId) {
+      getLogger().warn('TelnyxBridge.sendDtmf skipped: telnyxKey or callId missing');
+      return;
+    }
+    const filtered = Array.from(digits).filter((d) => TELNYX_DTMF_ALLOWED.has(d));
+    if (filtered.length === 0) {
+      getLogger().warn(`TelnyxBridge.sendDtmf: no valid digits in ${JSON.stringify(digits)}`);
+      return;
+    }
+    const duration = Math.max(100, Math.min(500, TELNYX_DTMF_DURATION_MS));
+    for (let i = 0; i < filtered.length; i += 1) {
+      await fetch(`https://api.telnyx.com/v2/calls/${encodeURIComponent(callId)}/actions/send_dtmf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${telnyxKey}` },
+        body: JSON.stringify({ digits: filtered[i], duration_millis: duration }),
+      });
+      if (i < filtered.length - 1) {
+        await sleep(delayMs);
+      }
+    }
+    getLogger().info(`Telnyx DTMF sent (${filtered.length} digits, delay=${delayMs}ms)`);
+  }
+
+  async startRecording(callId: string): Promise<void> {
+    const telnyxKey = this.config.telnyxKey ?? '';
+    if (!telnyxKey || !callId) return;
+    try {
+      const resp = await fetch(`https://api.telnyx.com/v2/calls/${encodeURIComponent(callId)}/actions/record_start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${telnyxKey}` },
+        body: JSON.stringify({ format: 'mp3', channels: 'single' }),
+      });
+      if (!resp.ok) {
+        getLogger().warn(`Telnyx record_start failed (${resp.status}): ${(await resp.text()).slice(0, 200)}`);
+      } else {
+        getLogger().info('Telnyx recording started');
+      }
+    } catch (e) {
+      getLogger().warn(`Telnyx record_start error: ${String(e)}`);
+    }
+  }
+
+  async stopRecording(callId: string): Promise<void> {
+    const telnyxKey = this.config.telnyxKey ?? '';
+    if (!telnyxKey || !callId) return;
+    try {
+      const resp = await fetch(`https://api.telnyx.com/v2/calls/${encodeURIComponent(callId)}/actions/record_stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${telnyxKey}` },
+        body: JSON.stringify({}),
+      });
+      if (!resp.ok) {
+        getLogger().warn(`Telnyx record_stop failed (${resp.status}): ${(await resp.text()).slice(0, 200)}`);
+      } else {
+        getLogger().info('Telnyx recording stopped');
+      }
+    } catch (e) {
+      getLogger().warn(`Telnyx record_stop error: ${String(e)}`);
+    }
+  }
+
+  async endCall(callId: string, _ws: WSWebSocket): Promise<void> {
+    // Hang up via Telnyx Call Control API. We intentionally do NOT close the
+    // media WebSocket here — Telnyx will emit a ``stop`` frame in response
+    // to the hangup, and the stream handler's ``stop`` processing drives the
+    // WebSocket close (matches the Python ``_telnyx_hangup`` helper which
+    // never touches the WS). Closing it here races with the carrier's stop
+    // frame and truncates in-flight media.
+    const telnyxKey = this.config.telnyxKey ?? '';
+    if (callId && telnyxKey) {
+      try {
+        await fetch(`https://api.telnyx.com/v2/calls/${encodeURIComponent(callId)}/actions/hangup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${telnyxKey}` },
+          body: JSON.stringify({}),
+        });
+      } catch { /* best effort — call may already be ended */ }
+    }
+  }
+
+  createStt(agent: AgentOptions): Promise<STTAdapter | null> {
+    return createSTT(agent);
+  }
+
+  async queryTelephonyCost(metricsAcc: CallMetricsAccumulator, callId: string): Promise<void> {
+    if (this.config.telnyxKey && callId) {
+      try {
+        const resp = await fetch(
+          `https://api.telnyx.com/v2/calls/${encodeURIComponent(callId)}`,
+          {
+            headers: { 'Authorization': `Bearer ${this.config.telnyxKey}` },
+            signal: AbortSignal.timeout(5000),
+          },
+        );
+        if (resp.ok) {
+          const body = await resp.json() as { data?: { cost?: { amount?: string } } };
+          const amount = body.data?.cost?.amount;
+          if (amount != null) {
+            metricsAcc.setActualTelephonyCost(Math.abs(parseFloat(amount)));
+            getLogger().info(`Telnyx actual cost: $${Math.abs(parseFloat(amount))}`);
+          }
+        }
+      } catch (err) {
+        // Fallback to estimated cost. Mirrors Py handlers/twilio_handler.py:538-539.
+        getLogger().debug(
+          `queryTelephonyCost(telnyx) failed: ${(err as Error)?.message ?? err}`,
+        );
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// EmbeddedServer
+// ---------------------------------------------------------------------------
+
+/** Maximum seconds to wait for active calls to finish during graceful shutdown. */
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 10_000;
+
+/** HTTP+WebSocket server that hosts the carrier webhook surface and per-call media streams. */
+export class EmbeddedServer {
+  private server: HTTPServer | null = null;
+  private wss: WebSocketServer | null = null;
+  /**
+   * Whether the dashboard + ``/api/*`` routes were mounted in ``start()``.
+   * The dashboard is now ALWAYS mounted when enabled (it never 404s): an
+   * exposed, token-less bind is protected with an auto-generated token
+   * rather than refused. This flag is therefore ``true`` whenever the
+   * dashboard is enabled — kept so the startup banner can gate on it.
+   */
+  private dashboardMounted = false;
+  /**
+   * The token actually in effect for the dashboard + ``/api/*`` routes,
+   * resolved in ``start()``. One of: the explicit ``dashboardToken`` if set;
+   * a freshly generated UUID when the bind is exposed and
+   * ``allowInsecureDashboard`` is ``false``; or ``''`` (OPEN) for loopback
+   * local dev and for an exposed bind with ``allowInsecureDashboard=true``.
+   * Read by the startup banner (to print the ready URL with ``?token=``) and
+   * by authentic tests (to authenticate).
+   */
+  private effectiveDashboardToken = '';
+
+  /** The token in effect for the dashboard, resolved at ``start()``. Empty string = served OPEN. */
+  get resolvedDashboardToken(): string {
+    return this.effectiveDashboardToken;
+  }
+  private twilioTokenWarningLogged = false;
+  private telnyxSigWarningLogged = false;
+  readonly metricsStore: MetricsStore;
+  /** Anonymous telemetry client, set by ``client.ts`` ``serve()``; emits the
+   * per-call ``call_completed`` event from the call-end path. */
+  telemetry?: TelemetryClient;
+  private readonly pricing: ReturnType<typeof mergePricing>;
+  private readonly remoteHandler = new RemoteMessageHandler();
+  /**
+   * Opt-in per-call filesystem logger. Path is resolved by ``client.ts``
+   * from the public ``LocalOptions.persist`` option (with the legacy
+   * ``PATTER_LOG_DIR`` env var as fallback). Initialised in the ctor
+   * because ``resolveLogRoot`` cannot see ``this.config`` from a field
+   * default expression.
+   */
+  private readonly callLogger: CallLogger;
+
+  /** Active WebSocket connections tracked for graceful shutdown. */
+  private readonly activeConnections = new Set<WSWebSocket>();
+  private readonly activeCallIds = new Map<WSWebSocket, string>();
+
+  /**
+   * Per-call AMD result callbacks keyed by CallSid / call_control_id.
+   * Public so ``client.ts`` can register a callback per outbound call.
+   * The Map slot is deleted after the callback fires once — preventing
+   * cross-call misfires when multiple concurrent outbound calls are in
+   * flight (single-slot was a race condition: the last registered callback
+   * would win for every in-flight AMD result).
+   */
+  public onMachineDetectionByCallSid: Map<
+    string,
+    (result: MachineDetectionResult) => void | Promise<void>
+  > = new Map();
+
+  /**
+   * Pre-warm first-message audio accessor wired by ``Patter.serve()``.
+   * The per-call StreamHandler invokes this with its ``callId`` at the
+   * start of the firstMessage emit; a defined return is sent verbatim
+   * in place of running TTS again. ``undefined`` means "no prewarm
+   * cache for this call — fall back to live synthesis". Default is a
+   * no-op so callers that instantiate ``EmbeddedServer`` directly
+   * (tests) work without further setup.
+   */
+  public popPrewarmAudio: (callId: string) => Buffer | undefined = () => undefined;
+
+  /**
+   * Pre-warmed provider WebSocket accessor wired by ``Patter.serve()``.
+   * The per-call StreamHandler invokes this with its ``callId`` at
+   * pipeline init; defined returns hand off pre-opened STT / TTS /
+   * Realtime sockets so the live first turn skips the cold-handshake.
+   * Default is a no-op for direct ``EmbeddedServer`` callers.
+   */
+  public popPrewarmedConnections: (
+    callId: string,
+  ) => import('./client').ParkedProviderConnections | undefined = () => undefined;
+
+  /**
+   * Prewarm waste recorder wired by ``Patter.serve()``. Invoked from
+   * the Twilio status callback (no-answer / busy / failed / canceled)
+   * and the Telnyx call.hangup / AMD-machine handlers so the cache
+   * entry is evicted when the call terminates before the media stream
+   * starts. Default is a no-op so direct ``EmbeddedServer`` callers
+   * (tests) work without further setup. See FIX #91.
+   */
+  public recordPrewarmWaste: (callId: string) => void = () => undefined;
+
+  /**
+   * Per-callId completion deferreds for ``Patter.call({ wait: true })``.
+   * Resolved by the FIRST terminal signal: the Twilio/Telnyx status callback
+   * for no-media outcomes (no-answer / busy / failed), or ``onCallEnd`` for a
+   * connected call (answered / voicemail). The AMD classification is recorded
+   * per callId so the connected-call path can distinguish ``answered`` from
+   * ``voicemail``. This is what lets ``call({ wait: true })`` resolve to a
+   * structured {@link CallResult} without the caller hand-wiring ``onCallEnd``
+   * to a promise. Public so ``client.ts`` can register/await + fail in-flight
+   * waiters on ``disconnect()``. Mirrors Python's ``EmbeddedServer._completions``.
+   */
+  public readonly completions = new Map<
+    string,
+    {
+      readonly promise: Promise<CallResult>;
+      readonly resolve: (r: CallResult) => void;
+      readonly reject: (e: Error) => void;
+      done: boolean;
+    }
+  >();
+  /** AMD classification recorded per callId, used by the connected-call path. */
+  private readonly amdClass = new Map<string, MachineDetectionResult['classification']>();
+  /**
+   * Random per-call telemetry correlation ids, keyed by carrier callId, so the
+   * `call_started` and `call_completed` events of the same call pair in the
+   * dataset. Insertion-ordered with a small FIFO cap (see `telemetryCallUid`).
+   */
+  private telemetryCallUids = new Map<string, string>();
+
+  constructor(
+    private readonly config: LocalConfig,
+    private readonly agent: AgentOptions,
+    public onCallStart?: (
+      data: Record<string, unknown>,
+    ) => Promise<void | Record<string, unknown> | undefined> | void | Record<string, unknown>,
+    public onCallEnd?: (data: Record<string, unknown>) => Promise<void>,
+    public onTranscript?: (data: Record<string, unknown>) => Promise<void>,
+    public onMessage?: PipelineMessageHandler | string,
+    private readonly recording: boolean = false,
+    public voicemailMessage: string = '',
+    public onMetrics?: (data: Record<string, unknown>) => Promise<void>,
+    pricingOverrides?: Record<string, Record<string, unknown>>,
+    private readonly dashboard: boolean = true,
+    private readonly dashboardToken: string = '',
+    /**
+     * Opt-out from the auto-generated dashboard token. When `false` (the
+     * default) and the dashboard is enabled with no explicit
+     * `dashboardToken` on a server reachable beyond loopback (tunnel /
+     * public webhook URL / explicit non-loopback bind), the SDK generates a
+     * one-time token and protects the dashboard + `/api/*` routes with it
+     * (the startup banner prints the ready-to-use URL including the token).
+     * Set this to `true` to serve the dashboard fully OPEN (no token) even
+     * when exposed — this leaks call transcripts and metadata (PII) to
+     * anyone who can reach the URL, so only enable it behind your own
+     * access control (Cloudflare Access, a tailnet, etc.).
+     */
+    private readonly allowInsecureDashboard: boolean = false,
+    /**
+     * Carrier-neutral local stereo recording (left=caller, right=agent).
+     * `false` (default) = off; `true` = write `recording.wav` into the
+     * per-call log directory (or `./recordings` when call logging is
+     * disabled); a string = explicit directory for the WAV files.
+     * Independent of the carrier-side `recording` flag — both may be on.
+     * Appended last to keep existing positional constructor callers stable.
+     */
+    private readonly localRecording: boolean | string = false,
+  ) {
+    this.metricsStore = new MetricsStore();
+    this.pricing = mergePricing(pricingOverrides as Record<string, { unit?: string; price?: number }> | undefined);
+
+    // Resolve the persistence root. Prefer the explicit value passed by
+    // ``client.ts`` (already resolved from the public ``persist`` option +
+    // env-var fallback). When ``persistRoot`` is ``undefined`` (callers
+    // that bypass ``client.ts`` and instantiate ``EmbeddedServer``
+    // directly, e.g. tests) fall back to the env var. ``null`` is the
+    // explicit "off" signal — keep it as null.
+    const logRoot = config.persistRoot === undefined
+      ? resolveLogRoot()
+      : config.persistRoot;
+    this.callLogger = new CallLogger(logRoot);
+
+    // Hydrate the dashboard from disk so /api/dashboard/calls survives a
+    // restart. CallLogger persists call metadata as JSONL/JSON under
+    // ``logRoot``; replay those files into the in-memory ring buffer.
+    // No-op when logging is disabled (``logRoot`` is ``null``).
+    if (logRoot) {
+      try {
+        const restored = this.metricsStore.hydrate(logRoot);
+        if (restored > 0) {
+          getLogger().info(`Dashboard hydrated ${restored} call(s) from ${logRoot}`);
+        }
+      } catch (err) {
+        getLogger().warn(`Dashboard hydration failed: ${String(err)}`);
+      }
+    }
+  }
+
+  // === Outbound completion registry (call({ wait: true })) ===
+
+  /**
+   * Register (or return) a completion promise for an outbound call.
+   *
+   * Called by ``Patter.call({ wait: true })`` immediately after the carrier
+   * accepts the dial — the promise resolves to a {@link CallResult} once a
+   * terminal signal arrives. Idempotent: returns the existing pending promise
+   * if one is already registered for ``callId``. Mirrors Python's
+   * ``register_completion``.
+   */
+  registerCompletion(callId: string): Promise<CallResult> {
+    const existing = this.completions.get(callId);
+    if (existing && !existing.done) {
+      return existing.promise;
+    }
+    let resolve!: (r: CallResult) => void;
+    let reject!: (e: Error) => void;
+    const promise = new Promise<CallResult>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    this.completions.set(callId, { promise, resolve, reject, done: false });
+    return promise;
+  }
+
+  /**
+   * Re-key per-call bookkeeping from the dial-time id to the live id.
+   *
+   * Plivo's ``POST /Call/`` returns ``request_uuid`` while every subsequent
+   * webhook and media frame carries the live ``CallUUID`` — without
+   * re-keying, ``call({ wait: true })`` promises, AMD callbacks and prewarm
+   * slots registered under the request_uuid never resolve/pop. Mirrors
+   * Python's ``alias_call_id``.
+   */
+  aliasCallId(oldId: string, newId: string): void {
+    if (!oldId || !newId || oldId === newId) return;
+    const completion = this.completions.get(oldId);
+    if (completion && !completion.done && !this.completions.has(newId)) {
+      this.completions.set(newId, completion);
+    }
+    this.completions.delete(oldId);
+    const cb = this.onMachineDetectionByCallSid.get(oldId);
+    if (cb && !this.onMachineDetectionByCallSid.has(newId)) {
+      this.onMachineDetectionByCallSid.set(newId, cb);
+    }
+    this.onMachineDetectionByCallSid.delete(oldId);
+    const cls = this.amdClass.get(oldId);
+    if (cls && !this.amdClass.has(newId)) this.amdClass.set(newId, cls);
+    this.amdClass.delete(oldId);
+    try {
+      this.aliasPrewarm?.(oldId, newId);
+    } catch (err) {
+      getLogger().debug(`aliasPrewarm threw: ${String(err)}`);
+    }
+  }
+
+  /** Optional client-bound hook to re-key prewarm caches (see aliasCallId). */
+  public aliasPrewarm: ((oldId: string, newId: string) => void) | undefined;
+
+  /**
+   * Client-bound SpeechEvents dispatcher. Threaded into every
+   * StreamHandler's deps — without this binding the public
+   * onUserSpeechStarted/.../onAudioOut API never fired on any real served
+   * call (only unit tests passed it). Mirrors Python's
+   * ``speech_events=...`` forwarding in server.py.
+   */
+  public speechEvents: import('./_speech-events').SpeechEvents | undefined;
+
+  /** Drop a registered completion (e.g. on a backstop timeout) without resolving it. */
+  deleteCompletion(callId: string): void {
+    this.completions.delete(callId);
+    this.amdClass.delete(callId);
+  }
+
+  /**
+   * Random per-call telemetry correlation id (never the carrier SID).
+   *
+   * Same ``callId`` → same uid, so ``call_started``/``call_completed`` pair in
+   * the dataset. ``pop=true`` on terminal events keeps the map from leaking; a
+   * small FIFO cap bounds calls that never reach a terminal event. ``pop`` with
+   * a missing entry still returns a fresh uid (a ``no_answer`` call never had a
+   * ``call_started`` — its lone event still gets one). Never throws. Mirrors
+   * Python's ``_telemetry_call_uid``.
+   */
+  private telemetryCallUid(callId: string | undefined | null, pop = false): string | undefined {
+    if (!callId) return undefined;
+    try {
+      if (pop) {
+        const uid = this.telemetryCallUids.get(callId);
+        this.telemetryCallUids.delete(callId);
+        return uid ?? randomUUID().replace(/-/g, '');
+      }
+      let uid = this.telemetryCallUids.get(callId);
+      if (uid === undefined) {
+        if (this.telemetryCallUids.size >= 512) {
+          const first = this.telemetryCallUids.keys().next().value;
+          if (first !== undefined) this.telemetryCallUids.delete(first);
+        }
+        uid = randomUUID().replace(/-/g, '');
+        this.telemetryCallUids.set(callId, uid);
+      }
+      return uid;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Resolve a pending completion with a {@link CallResult}.
+   *
+   * No-op when no completion is registered for ``callId`` (the common case —
+   * most calls are placed without ``wait: true``) or it is already done.
+   * Builds the result from the ``onCallEnd`` payload when ``data`` is provided
+   * (connected calls carry transcript + {@link CallMetrics}); no-media
+   * outcomes pass ``data`` undefined and yield an empty transcript / no cost.
+   * Mirrors Python's ``_resolve_completion``.
+   */
+  resolveCompletion(
+    callId: string,
+    args: { outcome: CallOutcome; status: string; data?: Record<string, unknown> },
+  ): void {
+    // Anonymous telemetry for NON-CONNECTED failures (no_answer / busy / failed).
+    // Connected calls (answered / voicemail) emit ``call_completed`` from
+    // ``wrappedEnd`` instead, so they are excluded here to avoid a double count.
+    // Runs before the completion guard so it fires for every call, not only
+    // ``wait: true`` ones.
+    if (args.outcome === 'no_answer' || args.outcome === 'busy' || args.outcome === 'failed') {
+      recordCallCompleted(this.telemetry, {
+        outcome: args.outcome,
+        carrier: this.config.telephonyProvider,
+        callUid: this.telemetryCallUid(callId, true),
+      });
+    }
+
+    const entry = this.completions.get(callId);
+    if (!entry || entry.done) return;
+
+    const data = args.data;
+    const metrics = (data?.metrics ?? null) as CallMetrics | null;
+    const cost = (metrics?.cost ?? null) as CostBreakdown | null;
+    const durationRaw = metrics?.duration_seconds;
+    const duration = typeof durationRaw === 'number' ? durationRaw : 0;
+    const transcriptRaw = data?.transcript;
+    const transcript = Array.isArray(transcriptRaw)
+      ? (transcriptRaw as CallResult['transcript'])
+      : [];
+
+    const result: CallResult = {
+      callId,
+      outcome: args.outcome,
+      status: args.status,
+      durationSeconds: duration,
+      transcript,
+      cost,
+      metrics,
+    };
+    entry.done = true;
+    entry.resolve(result);
+    this.completions.delete(callId);
+    this.amdClass.delete(callId);
+  }
+
+  /**
+   * Fail every in-flight completion with ``error``. Called by
+   * ``Patter.disconnect()`` so a ``call({ wait: true })`` awaiter does not
+   * hang until its backstop timeout once the server is gone. Mirrors the
+   * Python ``disconnect()`` change that fails in-flight ``wait=True`` awaiters.
+   */
+  failPendingCompletions(error: Error): void {
+    for (const entry of this.completions.values()) {
+      if (!entry.done) {
+        entry.done = true;
+        entry.reject(error);
+      }
+    }
+    this.completions.clear();
+    this.amdClass.clear();
+  }
+
+  /**
+   * Decide whether this server is reachable beyond loopback (127.0.0.1).
+   *
+   * The dashboard serves call transcripts and metadata (PII), so before
+   * mounting it unauthenticated we must know whether anyone off-host can
+   * reach the port. Signals (in order):
+   *
+   *   (a)+(b) — a public webhook URL. ``client.ts`` resolves
+   *       ``config.webhookUrl`` to the live hostname for every serve path:
+   *       a cloudflared quick-tunnel host, a {@link StaticTunnel} hostname,
+   *       or an explicit ``webhookUrl``. A tunnel directive (signal a) and a
+   *       public webhook URL (signal b) therefore both surface here as a
+   *       non-loopback, non-private webhook host. This is the case that
+   *       matters for tunnels — the whole port (dashboard included) is
+   *       published on a public ``*.trycloudflare.com`` URL.
+   *
+   *   (c) — an EXPLICIT non-loopback bind override via ``PATTER_BIND_HOST``.
+   *       Node's ``http.Server.listen(port, host)`` defaults to 127.0.0.1
+   *       here (see ``start()``), so plain local dev is never flagged; only
+   *       an operator who set ``PATTER_BIND_HOST`` to e.g. ``0.0.0.0`` is.
+   *
+   * Only loopback webhook hosts (127.0.0.0/8, localhost, ::1) are treated as
+   * not-exposed. RFC1918 / LAN hosts ARE exposure — they are reachable by
+   * other machines on the network — matching the Python SDK's gate.
+   */
+  private isExposed(): boolean {
+    // Signal (c): explicit non-loopback bind override.
+    const bindOverride = process.env.PATTER_BIND_HOST;
+    if (bindOverride && !isLoopbackHost(bindOverride)) {
+      return true;
+    }
+    // Signals (a)+(b): a non-loopback webhook host (tunnel-assigned or
+    // explicit). Any host that is not loopback is reachable beyond
+    // 127.0.0.1 — including RFC1918 / LAN addresses, which every other
+    // device on the network can reach. Mirrors the Python SDK
+    // (``_dashboard_is_exposed``), the parity reference: it treats any
+    // non-loopback webhook_url as exposed, with no private-range carve-out.
+    const host = extractHost(this.config.webhookUrl ?? '');
+    if (host && !isLoopbackHost(host)) {
+      return true;
+    }
+    return false;
+  }
+
+  /** Bind HTTP + WebSocket listeners on `port`, mount carrier webhooks and dashboard routes. */
+  async start(port: number = 8000): Promise<void> {
+    const webhookUrlPattern = /^[a-zA-Z0-9][a-zA-Z0-9.\-]+[a-zA-Z0-9]$/;
+    if (!webhookUrlPattern.test(this.config.webhookUrl)) {
+      throw new Error(`Invalid webhookUrl: must be a hostname with no protocol prefix or path (got: '${this.config.webhookUrl}')`);
+    }
+
+    // Startup-time warning when webhook signature enforcement is active but
+    // the verifying credential is missing. Surfacing this at startup prevents
+    // deployers from discovering the misconfiguration only via a first 503.
+    if (this.config.requireSignature !== false) {
+      if (this.config.telephonyProvider === 'twilio' && !this.config.twilioToken) {
+        getLogger().warn(
+          'Twilio webhook enforcement ACTIVE but twilioToken is empty — webhooks will 503. ' +
+            'Set requireSignature=false for local dev.',
+        );
+      }
+      if (this.config.telephonyProvider === 'telnyx' && !this.config.telnyxPublicKey) {
+        getLogger().warn(
+          'Telnyx webhook enforcement ACTIVE but telnyxPublicKey is empty — webhooks will 503. ' +
+            'Set requireSignature=false for local dev.',
+        );
+      }
+    }
+
+    // (Earlier versions of this file emitted a "Pipeline mode without VAD"
+    // warning here when neither `agent.engine` nor `agent.vad` was set.
+    // The warning is now stale: since the auto-VAD work landed in
+    // stream-handler.ts (`this.autoVad = await SileroVAD.forPhoneCall()`
+    // when `onnxruntime-node` is installed), the SDK silently provides a
+    // working VAD per call. The stream handler still logs a single,
+    // accurate message in the rare case the auto-load fails — emitting
+    // both warnings created false-positive alarm fatigue for operators.)
+
+    const app = express();
+    // Capture raw body for Telnyx signature verification before JSON parsing.
+    // The rawBody property is attached to the request object when needed.
+    app.use((req, _res, next) => {
+      if (req.path === '/webhooks/telnyx/voice') {
+        let raw = '';
+        req.setEncoding('utf8');
+        req.on('data', (chunk: string) => { raw += chunk; });
+        req.on('end', () => {
+          (req as express.Request & { rawBody?: string }).rawBody = raw;
+          try {
+            (req as express.Request & { body?: unknown }).body = JSON.parse(raw);
+          } catch {
+            (req as express.Request & { body?: unknown }).body = {};
+          }
+          next();
+        });
+        req.on('error', (err) => {
+          next(err);
+        });
+      } else {
+        next();
+      }
+    });
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true }));
+
+    app.get('/health', (_req, res) => {
+      res.json({ status: 'ok', mode: 'local' });
+    });
+
+    // Mount dashboard and B2B API routes.
+    //
+    // The dashboard + ``/api/*`` routes serve call transcripts and metadata
+    // (PII). The dashboard is ALWAYS mounted when enabled (it never 404s) —
+    // we resolve an EFFECTIVE token first and protect the routes with it:
+    //
+    //   - explicit ``dashboardToken`` set        => use it (unchanged).
+    //   - exposed + NOT allowInsecureDashboard    => auto-generate a one-time
+    //                                                token (zero config) and
+    //                                                print the ready URL.
+    //   - exposed + allowInsecureDashboard        => OPEN (no token), warn.
+    //   - loopback-only, no token                 => OPEN (local-dev, unchanged).
+    if (this.dashboard) {
+      const exposed = this.isExposed();
+      if (this.dashboardToken) {
+        // Explicit token — honour it as-is.
+        this.effectiveDashboardToken = this.dashboardToken;
+      } else if (exposed && !this.allowInsecureDashboard) {
+        // Exposed without a configured token: protect with a generated one.
+        this.effectiveDashboardToken = crypto.randomUUID();
+        getLogger().warn(
+          'Dashboard is reachable beyond 127.0.0.1 without a configured token; ' +
+            'protecting it with an auto-generated token. ' +
+            `Open: http://127.0.0.1:${port}/?token=${this.effectiveDashboardToken}  ` +
+            'Set dashboardToken for a stable token, or allowInsecureDashboard=true to ' +
+            'serve it open.',
+        );
+      } else if (exposed && this.allowInsecureDashboard) {
+        // Operator explicitly opted to serve the PII surface open.
+        this.effectiveDashboardToken = '';
+        getLogger().warn(
+          'Dashboard served WITHOUT authentication on a publicly-reachable bind ' +
+            '(allowInsecureDashboard=true). Call transcripts and metadata are ' +
+            'exposed to anyone who can reach this URL.',
+        );
+      } else {
+        // Loopback-only, no token: open local-dev behaviour, unchanged. The
+        // friendly banner warning is emitted on listen (see below).
+        this.effectiveDashboardToken = '';
+      }
+      mountDashboard(app, this.metricsStore, this.effectiveDashboardToken);
+      mountApi(app, this.metricsStore, this.effectiveDashboardToken);
+      this.dashboardMounted = true;
+    }
+
+    // Twilio statusCallback — captures ringing/no-answer/busy/failed
+    // transitions so the dashboard surfaces calls that never reach media.
+    // See BUG #06.
+    app.post('/webhooks/twilio/status', (req, res) => {
+      if (this.config.twilioToken) {
+        const signature = (req.headers['x-twilio-signature'] as string) || '';
+        const url = `https://${this.config.webhookUrl}${req.originalUrl}`;
+        const params = (req.body ?? {}) as Record<string, string>;
+        if (!validateTwilioSignature(url, params, signature, this.config.twilioToken)) {
+          res.status(403).send('Invalid signature');
+          return;
+        }
+      } else if (this.config.requireSignature !== false) {
+        getLogger().error('Twilio webhook rejected: twilioToken not configured and requireSignature is not false');
+        res.status(503).send('Webhook signature required');
+        return;
+      }
+      const body = req.body as Record<string, string>;
+      // Raw carrier values — the completion registry is keyed by the raw
+      // Twilio Call SID assigned at dial time, and the status string drives
+      // the carrier-agnostic outcome mapping. ``callSid`` / ``callStatus``
+      // below are sanitized for logging + the metrics store only.
+      const rawCallSid = body['CallSid'] ?? '';
+      const rawCallStatus = body['CallStatus'] ?? '';
+      const callSid = sanitizeLogValue(rawCallSid);
+      const callStatus = sanitizeLogValue(rawCallStatus);
+      const duration = body['CallDuration'] ?? body['Duration'] ?? '';
+      getLogger().info(
+        `Twilio status ${callStatus} for call ${callSid} (duration=${duration})`,
+      );
+      if (callSid && callStatus) {
+        const extra: Record<string, unknown> = {};
+        const parsed = parseFloat(duration);
+        if (!Number.isNaN(parsed)) extra.duration_seconds = parsed;
+        this.metricsStore.updateCallStatus(callSid, callStatus, extra);
+      }
+      // FIX #91 — when the call terminates before the media stream
+      // starts (no-answer / busy / failed / canceled), the prewarm
+      // cache entry would otherwise leak until ``endCall`` runs. Evict
+      // it here so the WARN fires once and the bytes are released
+      // regardless of whether the user calls ``endCall``.
+      if (
+        callSid &&
+        (callStatus === 'no-answer' ||
+          callStatus === 'busy' ||
+          callStatus === 'failed' ||
+          callStatus === 'canceled')
+      ) {
+        try {
+          this.recordPrewarmWaste(callSid);
+        } catch (err) {
+          getLogger().debug(`recordPrewarmWaste threw: ${String(err)}`);
+        }
+        // Resolve any pending call({ wait: true }) for a call that never
+        // reached media — no onCallEnd will fire for these. Keyed by the raw
+        // Call SID so it matches the id registered at dial time.
+        this.resolveCompletion(rawCallSid, {
+          outcome: twilioStatusToOutcome(rawCallStatus),
+          status: rawCallStatus,
+        });
+      }
+      res.status(204).send();
+    });
+
+    app.post('/webhooks/twilio/recording', (req, res) => {
+      if (this.config.twilioToken) {
+        const signature = (req.headers['x-twilio-signature'] as string) || '';
+        const url = `https://${this.config.webhookUrl}${req.originalUrl}`;
+        const params = (req.body ?? {}) as Record<string, string>;
+        if (!validateTwilioSignature(url, params, signature, this.config.twilioToken)) {
+          res.status(403).send('Invalid signature');
+          return;
+        }
+      } else if (this.config.requireSignature !== false) {
+        getLogger().error('Twilio webhook rejected: twilioToken not configured and requireSignature is not false');
+        res.status(503).send('Webhook signature required');
+        return;
+      }
+      const body = req.body as Record<string, string>;
+      const recordingSid = sanitizeLogValue(body['RecordingSid'] ?? '');
+      const recordingUrl = sanitizeLogValue(body['RecordingUrl'] ?? '');
+      const callSid = sanitizeLogValue(body['CallSid'] ?? '');
+      getLogger().info(`Recording ${recordingSid} for call ${callSid}: ${recordingUrl}`);
+      res.status(204).send();
+    });
+
+    app.post('/webhooks/twilio/amd', async (req, res) => {
+      if (this.config.twilioToken) {
+        const signature = (req.headers['x-twilio-signature'] as string) || '';
+        const url = `https://${this.config.webhookUrl}${req.originalUrl}`;
+        const params = (req.body ?? {}) as Record<string, string>;
+        if (!validateTwilioSignature(url, params, signature, this.config.twilioToken)) {
+          res.status(403).send('Invalid signature');
+          return;
+        }
+      } else if (this.config.requireSignature !== false) {
+        getLogger().error('Twilio webhook rejected: twilioToken not configured and requireSignature is not false');
+        res.status(503).send('Webhook signature required');
+        return;
+      }
+      const body = req.body as Record<string, string>;
+      const answeredBy = body['AnsweredBy'] ?? '';
+      const callSid = body['CallSid'] ?? '';
+      getLogger().info(`AMD result for ${sanitizeLogValue(callSid)}: ${sanitizeLogValue(answeredBy)}`);
+
+      // Record the AMD classification so a later onCallEnd can resolve
+      // call({ wait: true }) as ``voicemail`` vs ``answered``.
+      if (callSid) {
+        this.amdClass.set(callSid, classifyTwilioAmd(answeredBy));
+      }
+
+      // Fire the per-call onMachineDetection callback (if set by Patter.call())
+      // BEFORE the voicemail-drop logic so callers see the result regardless
+      // of whether a voicemail message was configured. Errors in user code
+      // must not break webhook delivery — Twilio retries on non-2xx.
+      // Looked up by callSid so concurrent outbound calls each get their
+      // own callback (Map replaces the old single-slot field).
+      const cb = callSid ? this.onMachineDetectionByCallSid.get(callSid) : undefined;
+      if (cb && callSid) {
+        this.onMachineDetectionByCallSid.delete(callSid);
+        try {
+          await cb({
+            call_id: callSid,
+            carrier: 'twilio',
+            classification: classifyTwilioAmd(answeredBy),
+            raw: answeredBy,
+            detected_at: Date.now() / 1000,
+          });
+        } catch (err) {
+          getLogger().warn(`onMachineDetection callback threw: ${sanitizeLogValue(String(err))}`);
+        }
+      }
+
+      // FIX #91 — when AMD classifies as machine, the agent's first
+      // message will not be played (we drop voicemail or hang up), so
+      // the prewarmed greeting is never consumed. Evict the cache entry
+      // once so the WARN fires regardless of whether ``voicemailMessage``
+      // is configured.
+      if (answeredBy.startsWith('machine_end') && callSid) {
+        try {
+          this.recordPrewarmWaste(callSid);
+        } catch (err) {
+          getLogger().debug(`recordPrewarmWaste threw: ${String(err)}`);
+        }
+      }
+
+      if (
+        answeredBy.startsWith('machine_end') &&
+        this.voicemailMessage &&
+        this.config.twilioSid &&
+        this.config.twilioToken
+      ) {
+        if (!validateTwilioSid(callSid)) {
+          getLogger().warn(`AMD webhook rejected: invalid CallSid ${JSON.stringify(sanitizeLogValue(callSid))}`);
+          res.status(400).send('Invalid CallSid');
+          return;
+        }
+        const twiml = `<Response><Say>${xmlEscape(this.voicemailMessage)}</Say><Hangup/></Response>`;
+        try {
+          const vmUrl = `https://api.twilio.com/2010-04-01/Accounts/${this.config.twilioSid}/Calls/${callSid}.json`;
+          // Voicemail-drop is best-effort — degrade gracefully on slow/unreachable
+          // Twilio API rather than blocking call-flow indefinitely (mirrors
+          // Python server.py voicemail-drop httpx timeout=10.0).
+          const vmResp = await fetch(vmUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Authorization': `Basic ${Buffer.from(`${this.config.twilioSid}:${this.config.twilioToken}`).toString('base64')}`,
+            },
+            body: new URLSearchParams({ Twiml: twiml }).toString(),
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (vmResp.ok) {
+            getLogger().info(`Voicemail dropped for ${sanitizeLogValue(callSid)}`);
+          } else {
+            getLogger().warn(`Could not drop voicemail: ${sanitizeLogValue(await vmResp.text())}`);
+          }
+        } catch (e) {
+          getLogger().warn(`Could not drop voicemail: ${sanitizeLogValue(String(e))}`);
+        }
+      }
+
+      res.status(204).send();
+    });
+
+    app.post('/webhooks/twilio/conference', (req, res) => {
+      // Conference lifecycle events for warm transfers (start / end / join /
+      // leave). Observability-only: logged and acknowledged. Signature-
+      // validated exactly like every other Twilio webhook — fail-closed.
+      if (this.config.twilioToken) {
+        const signature = (req.headers['x-twilio-signature'] as string) || '';
+        const url = `https://${this.config.webhookUrl}${req.originalUrl}`;
+        const params = (req.body ?? {}) as Record<string, string>;
+        if (!validateTwilioSignature(url, params, signature, this.config.twilioToken)) {
+          res.status(403).send('Invalid signature');
+          return;
+        }
+      } else if (this.config.requireSignature !== false) {
+        getLogger().error('Twilio webhook rejected: twilioToken not configured and requireSignature is not false');
+        res.status(503).send('Webhook signature required');
+        return;
+      }
+      const body = (req.body ?? {}) as Record<string, string>;
+      getLogger().info(
+        `Twilio conference event ${sanitizeLogValue(body['StatusCallbackEvent'] ?? '')} ` +
+          `for ${sanitizeLogValue(body['FriendlyName'] ?? '')} ` +
+          `(conference=${sanitizeLogValue(body['ConferenceSid'] ?? '')}, ` +
+          `call=${sanitizeLogValue(body['CallSid'] ?? '')})`,
+      );
+      res.status(204).send();
+    });
+
+    app.post('/webhooks/twilio/warm-status', async (req, res) => {
+      // Terminal status of the warm-transfer TARGET leg (the human agent
+      // dialed into the conference). When that leg never connects (busy /
+      // no-answer / failed / canceled) the caller is parked on hold with the
+      // AI stream already gone — release them gracefully. Signature-
+      // validated exactly like every other Twilio webhook — fail-closed.
+      if (this.config.twilioToken) {
+        const signature = (req.headers['x-twilio-signature'] as string) || '';
+        const url = `https://${this.config.webhookUrl}${req.originalUrl}`;
+        const params = (req.body ?? {}) as Record<string, string>;
+        if (!validateTwilioSignature(url, params, signature, this.config.twilioToken)) {
+          res.status(403).send('Invalid signature');
+          return;
+        }
+      } else if (this.config.requireSignature !== false) {
+        getLogger().error('Twilio webhook rejected: twilioToken not configured and requireSignature is not false');
+        res.status(503).send('Webhook signature required');
+        return;
+      }
+      const body = (req.body ?? {}) as Record<string, string>;
+      const callStatus = body['CallStatus'] ?? '';
+      const callerCallSid = typeof req.query.caller_call_sid === 'string' ? req.query.caller_call_sid : '';
+      getLogger().info(
+        `Twilio warm-transfer target status ${sanitizeLogValue(callStatus)} ` +
+          `(caller leg ${sanitizeLogValue(callerCallSid)})`,
+      );
+      if (['busy', 'no-answer', 'failed', 'canceled'].includes(callStatus)) {
+        if (!validateTwilioSid(callerCallSid)) {
+          getLogger().warn(
+            `warm-status callback: invalid caller_call_sid ${JSON.stringify(sanitizeLogValue(callerCallSid))}, ignoring`,
+          );
+          res.status(204).send();
+          return;
+        }
+        if (this.config.twilioSid && this.config.twilioToken) {
+          const twiml = `<Response><Say>${xmlEscape(WARM_TRANSFER_FAILED_MESSAGE)}</Say><Hangup/></Response>`;
+          try {
+            await fetch(
+              `https://api.twilio.com/2010-04-01/Accounts/${this.config.twilioSid}/Calls/${callerCallSid}.json`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                  'Authorization': `Basic ${Buffer.from(`${this.config.twilioSid}:${this.config.twilioToken}`).toString('base64')}`,
+                },
+                body: new URLSearchParams({ Twiml: twiml }).toString(),
+                signal: AbortSignal.timeout(10_000),
+              },
+            );
+            getLogger().info(
+              `Warm transfer target unreachable (${sanitizeLogValue(callStatus)}) — released caller ${sanitizeLogValue(callerCallSid)}`,
+            );
+          } catch (err) {
+            getLogger().warn(
+              `Could not release caller after failed warm transfer: ${sanitizeLogValue(String(err))}`,
+            );
+          }
+        }
+      }
+      res.status(204).send();
+    });
+
+    app.post('/webhooks/twilio/voice', (req, res) => {
+      if (this.config.twilioToken) {
+        const signature = (req.headers['x-twilio-signature'] as string) || '';
+        const url = `https://${this.config.webhookUrl}${req.originalUrl}`;
+        const params = (req.body ?? {}) as Record<string, string>;
+        if (!validateTwilioSignature(url, params, signature, this.config.twilioToken)) {
+          res.status(403).send('Invalid signature');
+          return;
+        }
+      } else if (this.config.requireSignature !== false) {
+        getLogger().error('Twilio webhook rejected: twilioToken not configured and requireSignature is not false');
+        res.status(503).send('Webhook signature required');
+        return;
+      } else if (!this.twilioTokenWarningLogged) {
+        this.twilioTokenWarningLogged = true;
+        getLogger().warn('Twilio webhook signature validation disabled — set twilioToken for production');
+      }
+      const callSid = (req.body.CallSid as string) || '';
+      if (callSid && !validateTwilioSid(callSid)) {
+        getLogger().warn(`Twilio voice webhook rejected: invalid CallSid ${JSON.stringify(callSid)}`);
+        res.status(400).send('Invalid CallSid');
+        return;
+      }
+      const caller = (req.body.From as string) || '';
+      const callee = (req.body.To as string) || '';
+      const rawStreamUrl = `wss://${this.config.webhookUrl}/ws/stream/${callSid}`;
+      const xmlStreamUrl = xmlEscape(rawStreamUrl);
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Connect><Stream url="${xmlStreamUrl}"><Parameter name="caller" value="${xmlEscape(caller)}"/><Parameter name="callee" value="${xmlEscape(callee)}"/></Stream></Connect></Response>`;
+      res.type('text/xml').send(twiml);
+    });
+
+    app.post('/webhooks/telnyx/voice', async (req, res) => {
+      // Enforce Ed25519 signature verification when a public key is configured.
+      if (this.config.telnyxPublicKey) {
+        const rawBody = (req as express.Request & { rawBody?: string }).rawBody ?? '';
+        const signature = (req.headers['telnyx-signature-ed25519'] as string) ?? '';
+        const timestamp = (req.headers['telnyx-timestamp'] as string) ?? '';
+        if (!signature || !timestamp || !validateTelnyxSignature(rawBody, signature, timestamp, this.config.telnyxPublicKey)) {
+          getLogger().warn('Telnyx webhook rejected: invalid or missing Ed25519 signature');
+          return res.status(403).send('Invalid signature');
+        }
+      } else if (this.config.requireSignature !== false) {
+        getLogger().error('Telnyx webhook rejected: telnyxPublicKey not configured and requireSignature is not false');
+        return res.status(503).send('Webhook signature required');
+      } else if (!this.telnyxSigWarningLogged) {
+        this.telnyxSigWarningLogged = true;
+        getLogger().warn('Telnyx webhook signature verification is disabled. Set telnyxPublicKey in LocalOptions for production use.');
+      }
+
+      const body = req.body as {
+        data?: {
+          event_type?: string;
+          payload?: {
+            call_control_id?: string;
+            from?: string;
+            to?: string;
+            direction?: string;
+            digit?: string;
+            result?: string;
+            hangup_cause?: string;
+            recording_urls?: { mp3?: string; wav?: string };
+            public_recording_urls?: { mp3?: string; wav?: string };
+          };
+        };
+      };
+
+      if (typeof body?.data !== 'object' || body.data === null || Array.isArray(body.data)) {
+        return res.status(400).send('Invalid body');
+      }
+      if (typeof body.data.event_type !== 'string' || typeof body.data.payload !== 'object' || body.data.payload === null) {
+        return res.status(400).send('Invalid body');
+      }
+
+      const eventType = body.data.event_type ?? '';
+      const payload = body.data.payload ?? {};
+
+      if (eventType === 'call.dtmf.received') {
+        const digit = String(payload.digit ?? '').trim();
+        if (digit) {
+          getLogger().info(`Telnyx DTMF received (webhook): ${sanitizeLogValue(digit)}`);
+        }
+        return res.status(200).send();
+      }
+
+      if (eventType === 'call.recording.saved') {
+        const recordingUrl =
+          payload.recording_urls?.mp3 ??
+          payload.recording_urls?.wav ??
+          payload.public_recording_urls?.mp3 ??
+          '';
+        if (recordingUrl) {
+          getLogger().info(`Telnyx recording saved (webhook): ${sanitizeLogValue(recordingUrl)}`);
+        }
+        return res.status(200).send();
+      }
+
+      // AMD result — mirrors Twilio's ``AnsweredBy == machine_end_*``
+      // voicemail-drop flow. When Telnyx classifies the call as answered
+      // by machine we speak the configured ``voicemailMessage`` via
+      // ``actions/speak`` and then hang up via ``actions/hangup``.
+      // Matches ``libraries/python/getpatter/handlers/telnyx_handler.py::handle_amd_result``.
+      if (eventType === 'call.machine.detection.ended') {
+        const amdCallId = payload.call_control_id ?? '';
+        const amdResult = String(payload.result ?? '');
+        getLogger().info(
+          `Telnyx AMD result for ${sanitizeLogValue(amdCallId)}: ${sanitizeLogValue(amdResult)}`,
+        );
+        // Record the AMD classification so a later onCallEnd can resolve
+        // call({ wait: true }) as ``voicemail`` vs ``answered``.
+        if (amdCallId) {
+          this.amdClass.set(amdCallId, classifyTelnyxAmd(amdResult));
+        }
+        // Fire the per-call onMachineDetection callback. Same rationale as
+        // the Twilio path above — caller sees the result even when no
+        // voicemailMessage is configured, and errors in user code don't
+        // break webhook delivery.
+        // Looked up by amdCallId (call_control_id) so concurrent outbound
+        // calls each get their own callback.
+        const cbTx = amdCallId ? this.onMachineDetectionByCallSid.get(amdCallId) : undefined;
+        if (cbTx && amdCallId) {
+          this.onMachineDetectionByCallSid.delete(amdCallId);
+          try {
+            await cbTx({
+              call_id: amdCallId,
+              carrier: 'telnyx',
+              classification: classifyTelnyxAmd(amdResult),
+              raw: amdResult,
+              detected_at: Date.now() / 1000,
+            });
+          } catch (err) {
+            getLogger().warn(`onMachineDetection callback threw: ${sanitizeLogValue(String(err))}`);
+          }
+        }
+        if (amdCallId && (amdResult === 'machine' || amdResult === 'machine_detected')) {
+          // Voicemail drop moved to ``call.machine.greeting.ended``: the
+          // dial requests ``answering_machine_detection: "greeting_end"``
+          // precisely so Telnyx tells us when the machine's greeting
+          // reaches the beep — speaking on this early classification
+          // started the voicemail mid-greeting (clipped before the beep).
+          // FIX #91 — when AMD classifies as machine the agent's first
+          // message is replaced by ``voicemailMessage`` (or the call
+          // simply ends), so the prewarmed greeting is never consumed.
+          // Evict it so the WARN fires once.
+          try {
+            this.recordPrewarmWaste(amdCallId);
+          } catch (err) {
+            getLogger().debug(`recordPrewarmWaste threw: ${String(err)}`);
+          }
+        }
+        return res.status(200).send();
+      }
+
+      if (eventType === 'call.machine.greeting.ended') {
+        // The answering machine's greeting just ended (beep) — the correct
+        // moment to speak the voicemail. Fire-and-forget: the drop sleeps
+        // for the playback estimate (up to 30 s) and the webhook must 200
+        // NOW or Telnyx retries it and the message overlaps itself.
+        const greetCallId = payload.call_control_id ?? '';
+        if (greetCallId && this.voicemailMessage) {
+          void this.handleTelnyxAmdVoicemail(greetCallId).catch((err) =>
+            getLogger().warn(`Telnyx voicemail drop failed: ${String(err)}`),
+          );
+        }
+        return res.status(200).send();
+      }
+
+      // FIX #91 — Telnyx fires ``call.hangup`` as the final status
+      // notification. ``hangup_cause`` distinguishes carrier outcomes
+      // (``call_rejected`` / ``busy`` / ``no_answer`` / ``timeout`` /
+      // ``normal_clearing`` / …). When the call never reached the
+      // media stream the prewarm cache leaks unless we evict it here.
+      if (eventType === 'call.hangup') {
+        const hangupCallId = payload.call_control_id ?? '';
+        const hangupCause = String(payload.hangup_cause ?? '');
+        getLogger().info(
+          `Telnyx call.hangup for ${sanitizeLogValue(hangupCallId)} ` +
+            `(cause=${sanitizeLogValue(hangupCause)})`,
+        );
+        if (hangupCallId) {
+          try {
+            this.recordPrewarmWaste(hangupCallId);
+          } catch (err) {
+            getLogger().debug(`recordPrewarmWaste threw: ${String(err)}`);
+          }
+          // Resolve a pending call({ wait: true }) only for no-media hangup
+          // causes (no-answer / busy / rejected). ``normal_clearing`` implies
+          // the call connected → ``null`` here so onCallEnd resolves it with
+          // the full transcript instead.
+          const noMediaOutcome = telnyxHangupOutcome(hangupCause);
+          if (noMediaOutcome !== null) {
+            this.resolveCompletion(hangupCallId, {
+              outcome: noMediaOutcome,
+              status: hangupCause,
+            });
+            // Terminal-ize the pre-registered dashboard row: a no-media
+            // hangup (busy / no-answer / rejected) never reaches
+            // recordCallEnd, so without this the call stayed in the active
+            // set forever (phantom live row, inflated active_calls).
+            try {
+              const statusMap: Record<string, string> = {
+                no_answer: 'no-answer',
+                busy: 'busy',
+                failed: 'failed',
+              };
+              this.metricsStore.updateCallStatus(
+                hangupCallId,
+                statusMap[noMediaOutcome] ?? 'failed',
+              );
+            } catch (err) {
+              getLogger().debug(`updateCallStatus threw: ${String(err)}`);
+            }
+          }
+        }
+        return res.status(200).send();
+      }
+
+      const callControlId = payload.call_control_id ?? '';
+      if (!callControlId) {
+        getLogger().warn('Telnyx webhook rejected: missing call_control_id');
+        return res.status(400).send('Invalid webhook payload');
+      }
+
+      // BUG #16 — Telnyx Call Control is a REST API. The webhook body is an
+      // informational notification; the response body is ignored. To answer
+      // a call we POST ``actions/answer``, and to start audio streaming we
+      // POST ``actions/streaming_start`` (once the call is answered).
+      const apiKey = this.config.telnyxKey;
+      if (!apiKey) {
+        getLogger().warn('Telnyx webhook: missing telnyxKey in LocalOptions');
+        return res.status(500).send('Missing Telnyx API key');
+      }
+
+      const apiBase = 'https://api.telnyx.com/v2';
+      const authHeaders = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      } as const;
+
+      try {
+        if (eventType === 'call.initiated') {
+          const direction = String(payload.direction ?? '').toLowerCase();
+          if (direction === 'outgoing') {
+            // Our own outbound leg: the Answer command is only valid on
+            // incoming legs (422 on outgoing), and the historical
+            // answer-with-inline-stream fold severed outbound media entirely
+            // — the callee answered to dead air. Streaming is attached on
+            // ``call.answered`` below instead.
+            getLogger().debug(`Telnyx call.initiated ${callControlId} (outgoing) — awaiting answer`);
+            return res.status(200).send();
+          }
+          // PERF — Telnyx accepts the streaming params inline on
+          // ``actions/answer`` and auto-starts the stream the moment the
+          // leg picks up. Folding ``streaming_start`` into the answer body
+          // removes the ``call.answered`` webhook round-trip and a second
+          // POST (~100-200 ms saved per inbound call). Incoming legs only —
+          // see above.
+          const caller = payload.from ?? '';
+          const callee = payload.to ?? '';
+          const streamUrl =
+            `wss://${this.config.webhookUrl}/ws/stream/${encodeURIComponent(callControlId)}` +
+            `?caller=${encodeURIComponent(caller)}&callee=${encodeURIComponent(callee)}`;
+          getLogger().info(`Telnyx call.initiated ${callControlId} — answering with inline stream`);
+          const resp = await fetch(`${apiBase}/calls/${encodeURIComponent(callControlId)}/actions/answer`, {
+            method: 'POST',
+            headers: authHeaders,
+            body: JSON.stringify({
+              stream_url: streamUrl,
+              // ``inbound_track`` halves WS upstream bandwidth — outbound
+              // echo was always filtered downstream anyway.
+              stream_track: 'inbound_track',
+              stream_bidirectional_mode: 'rtp',
+              stream_bidirectional_codec: 'PCMU',
+              stream_bidirectional_sampling_rate: 8000,
+              stream_bidirectional_target_legs: 'self',
+            }),
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!resp.ok) {
+            getLogger().warn(`Telnyx answer failed: ${resp.status} ${(await resp.text()).slice(0, 200)}`);
+          }
+        } else if (eventType === 'call.answered') {
+          const direction = String(payload.direction ?? '').toLowerCase();
+          if (direction === 'outgoing') {
+            // Outbound leg picked up: attach the media stream now. The Dial
+            // API takes no stream params and the inbound-style
+            // answer-with-stream never runs for outgoing legs, so this POST
+            // is the ONLY place outbound audio is wired.
+            const outCaller = payload.from ?? '';
+            const outCallee = payload.to ?? '';
+            const streamUrl =
+              `wss://${this.config.webhookUrl}/ws/stream/${encodeURIComponent(callControlId)}` +
+              `?caller=${encodeURIComponent(outCaller)}&callee=${encodeURIComponent(outCallee)}`;
+            getLogger().info(
+              `Telnyx call.answered ${callControlId} (outgoing) — starting media stream`,
+            );
+            const resp = await fetch(
+              `${apiBase}/calls/${encodeURIComponent(callControlId)}/actions/streaming_start`,
+              {
+                method: 'POST',
+                headers: authHeaders,
+                body: JSON.stringify({
+                  stream_url: streamUrl,
+                  stream_track: 'inbound_track',
+                  stream_bidirectional_mode: 'rtp',
+                  stream_bidirectional_codec: 'PCMU',
+                  stream_bidirectional_sampling_rate: 8000,
+                  stream_bidirectional_target_legs: 'self',
+                }),
+                signal: AbortSignal.timeout(10_000),
+              },
+            );
+            if (!resp.ok) {
+              getLogger().warn(
+                `Telnyx streaming_start failed: ${resp.status} ${(await resp.text()).slice(0, 200)}`,
+              );
+            }
+            return res.status(200).send();
+          }
+          // Incoming legs: ``call.initiated`` already submitted answer +
+          // streaming in a single call; acknowledge.
+          getLogger().debug(`Telnyx call.answered ${callControlId} — stream already active (inline)`);
+        } else {
+          getLogger().debug(`Telnyx event ignored: ${eventType}`);
+        }
+      } catch (e) {
+        getLogger().error(`Telnyx webhook handler error: ${String(e)}`);
+      }
+
+      // Telnyx ignores the response body. Acknowledge with 200 OK.
+      return res.status(200).send();
+    });
+
+    // --- Plivo ---
+
+    // Verify the X-Plivo-Signature-V3 header. V3 signs ``url + sorted_post_params
+    // + "." + nonce`` for POST and ``url + "." + nonce`` for GET — so the form
+    // body (already parsed by express.urlencoded) has to feed into the
+    // signature calculation. Returns false (and writes the error response) to
+    // short-circuit the route.
+    const validatePlivoRequest = (req: express.Request, res: express.Response): boolean => {
+      const authToken = this.config.plivoAuthToken;
+      if (!authToken) {
+        if (this.config.requireSignature !== false) {
+          getLogger().error(
+            'Plivo webhook rejected: plivoAuthToken not configured and requireSignature is not false',
+          );
+          res.status(503).send('Webhook signature required');
+          return false;
+        }
+        return true;
+      }
+      const method = req.method.toUpperCase() as 'GET' | 'POST';
+      const params: Record<string, string> =
+        method === 'POST' && req.body && typeof req.body === 'object'
+          ? Object.fromEntries(
+              Object.entries(req.body as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+            )
+          : {};
+      const signature = (req.headers['x-plivo-signature-v3'] as string) || '';
+      const nonce = (req.headers['x-plivo-signature-v3-nonce'] as string) || '';
+      const url = `https://${this.config.webhookUrl}${req.originalUrl}`;
+      if (!validatePlivoSignature(url, nonce, signature, authToken, params, method)) {
+        getLogger().warn('Plivo webhook rejected: invalid or missing V3 signature');
+        res.status(403).send('Invalid signature');
+        return false;
+      }
+      return true;
+    };
+
+    app.post('/webhooks/plivo/voice', (req, res) => {
+      if (!validatePlivoRequest(req, res)) return;
+      const body = (req.body ?? {}) as Record<string, string>;
+      // Plivo posts CallUUID + From/To on the answer_url for inbound AND
+      // answered-outbound calls — the same route serves both.
+      const callUuid = body['CallUUID'] ?? '';
+      const caller = body['From'] ?? '';
+      const callee = body['To'] ?? '';
+      // API-originated calls answer with BOTH ids: re-key wait promises /
+      // AMD callbacks / prewarm slots from request_uuid → CallUUID.
+      const requestUuid = body['RequestUUID'] ?? '';
+      if (requestUuid && callUuid) this.aliasCallId(requestUuid, callUuid);
+      const qs = `?caller=${encodeURIComponent(caller)}&callee=${encodeURIComponent(callee)}`;
+      const streamUrl = `wss://${this.config.webhookUrl}/ws/plivo/stream/${callUuid || 'outbound'}${qs}`;
+      const xml = PlivoAdapter.generateStreamXml(streamUrl, 'audio/x-mulaw;rate=8000', {
+        'X-PH-caller': caller,
+        'X-PH-callee': callee,
+      });
+      res.type('text/xml').send(xml);
+    });
+
+    app.post('/webhooks/plivo/status', (req, res) => {
+      if (!validatePlivoRequest(req, res)) return;
+      const body = (req.body ?? {}) as Record<string, string>;
+      const callUuid = body['CallUUID'] ?? '';
+      const callStatus = body['CallStatus'] ?? body['Status'] ?? '';
+      const duration = body['Duration'] ?? body['BillDuration'] ?? '';
+      getLogger().info(
+        `Plivo status ${sanitizeLogValue(callStatus)} for call ${sanitizeLogValue(callUuid)} (duration=${duration})`,
+      );
+      if (callUuid && callStatus) {
+        const extra: Record<string, unknown> = {};
+        const parsed = parseFloat(duration);
+        if (!Number.isNaN(parsed)) extra.duration_seconds = parsed;
+        this.metricsStore.updateCallStatus(callUuid, callStatus, extra);
+      }
+      if (
+        callUuid &&
+        ['no-answer', 'busy', 'failed', 'timeout', 'cancel'].includes(callStatus)
+      ) {
+        try {
+          this.recordPrewarmWaste(callUuid);
+        } catch (err) {
+          getLogger().debug(`recordPrewarmWaste threw: ${String(err)}`);
+        }
+        // Resolve a pending call({ wait: true }) for a call that never reached
+        // media — no onCallEnd will fire for these.
+        const outcome: CallOutcome =
+          callStatus === 'no-answer' || callStatus === 'timeout'
+            ? 'no_answer'
+            : callStatus === 'busy'
+              ? 'busy'
+              : 'failed';
+        this.resolveCompletion(callUuid, { outcome, status: callStatus });
+      }
+      res.status(200).send();
+    });
+
+    app.post('/webhooks/plivo/amd', async (req, res) => {
+      if (!validatePlivoRequest(req, res)) return;
+      const body = (req.body ?? {}) as Record<string, string>;
+      const callUuid = body['CallUUID'] ?? '';
+      // Plivo's async AMD result field name varies by API version — accept the
+      // common spellings; classifyPlivoAmd normalises them.
+      const amdRaw =
+        body['Machine'] || body['MachineDetection'] || body['AnsweredBy'] || body['CallStatus'] || '';
+      getLogger().info(`AMD result for ${sanitizeLogValue(callUuid)}: ${sanitizeLogValue(amdRaw)}`);
+      const classification = classifyPlivoAmd(amdRaw);
+      // Record the AMD classification so a later onCallEnd can resolve a
+      // pending call({ wait: true }) as ``voicemail`` vs ``answered``.
+      if (callUuid) this.amdClass.set(callUuid, classification);
+
+      // Fire the per-call onMachineDetection callback. Plivo registers under
+      // its dial-time ``request_uuid``, but this webhook only carries the live
+      // ``CallUUID`` — the two identifiers differ. Try a keyed lookup first
+      // (works if a future Plivo change ever aligns them), then fall back to
+      // the single pending callback when exactly one is registered. The
+      // fallback preserves the single-slot semantics Python uses for Plivo
+      // while still benefiting from the per-callSid Map for Twilio / Telnyx.
+      let cbKey = callUuid && this.onMachineDetectionByCallSid.has(callUuid) ? callUuid : undefined;
+      if (cbKey === undefined && this.onMachineDetectionByCallSid.size === 1) {
+        cbKey = this.onMachineDetectionByCallSid.keys().next().value;
+      }
+      const cb = cbKey !== undefined ? this.onMachineDetectionByCallSid.get(cbKey) : undefined;
+      if (cb && callUuid) {
+        if (cbKey !== undefined) this.onMachineDetectionByCallSid.delete(cbKey);
+        try {
+          await cb({
+            call_id: callUuid,
+            carrier: 'plivo',
+            classification,
+            raw: amdRaw,
+            detected_at: Date.now() / 1000,
+          });
+        } catch (err) {
+          getLogger().warn(`onMachineDetection callback threw: ${sanitizeLogValue(String(err))}`);
+        }
+      }
+
+      if (classification === 'machine' && callUuid) {
+        try {
+          this.recordPrewarmWaste(callUuid);
+        } catch (err) {
+          getLogger().debug(`recordPrewarmWaste threw: ${String(err)}`);
+        }
+        if (this.voicemailMessage && this.config.plivoAuthId && this.config.plivoAuthToken) {
+          // Fire-and-forget: the drop sleeps for the playback estimate and
+          // the webhook must 200 NOW or Plivo retries it and the voicemail
+          // is spoken twice over itself.
+          void dropPlivoVoicemail(
+            callUuid,
+            this.voicemailMessage,
+            this.config.plivoAuthId,
+            this.config.plivoAuthToken,
+          ).catch((err) => getLogger().warn(`Plivo voicemail drop failed: ${String(err)}`));
+        }
+      }
+      res.status(200).send();
+    });
+
+    // Blind-transfer target XML: the ``aleg_url`` PlivoBridge.transferCall
+    // redirects the A-leg to. Served for GET and POST (Plivo may use either).
+    app.all('/webhooks/plivo/transfer', (req, res) => {
+      if (!validatePlivoRequest(req, res)) return;
+      const to = String((req.query.to as string) ?? '');
+      if (!to || !/^\+[1-9]\d{6,14}$/.test(to)) {
+        getLogger().warn(`Plivo transfer XML: invalid target ${JSON.stringify(to)}`);
+        res.type('text/xml').send('<Response><Hangup/></Response>');
+        return;
+      }
+      res.type('text/xml').send(`<Response><Dial><Number>${xmlEscape(to)}</Number></Dial></Response>`);
+    });
+
+    this.server = createServer(app);
+    this.wss = new WebSocketServer({ noServer: true });
+
+    // Per-IP WebSocket connection counter for DoS protection.
+    // Telephony providers (Twilio/Telnyx) only open 1 connection per call;
+    // a limit of 10 concurrent connections per IP is generous but blocks abuse.
+    const MAX_WS_PER_IP = 10;
+    const wsConnectionsByIp = new Map<string, number>();
+
+    this.server.on('upgrade', (req, socket, head) => {
+      let remoteIp = (req.socket?.remoteAddress ?? 'unknown').replace(/^::ffff:/, '');
+      // Behind the recommended cloudflared/ngrok tunnel EVERY carrier media
+      // WS arrives from loopback — keying the cap on the socket peer put all
+      // calls in one shared bucket (legitimate call #11 rejected; one remote
+      // abuser could exhaust it). Prefer the tunnel-provided client IP.
+      if (remoteIp === '127.0.0.1' || remoteIp === '::1') {
+        const fwd =
+          (req.headers['cf-connecting-ip'] as string | undefined) ??
+          (req.headers['x-forwarded-for'] as string | undefined) ??
+          '';
+        const firstHop = fwd.split(',')[0]?.trim();
+        if (firstHop) remoteIp = firstHop.replace(/^::ffff:/, '');
+      }
+      const currentCount = wsConnectionsByIp.get(remoteIp) ?? 0;
+      if (currentCount >= MAX_WS_PER_IP) {
+        getLogger().warn(`WebSocket upgrade rejected: too many connections from ${remoteIp}`);
+        socket.write('HTTP/1.1 429 Too Many Requests\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      this.wss!.handleUpgrade(req, socket, head, (ws) => {
+        wsConnectionsByIp.set(remoteIp, (wsConnectionsByIp.get(remoteIp) ?? 0) + 1);
+        ws.once('close', () => {
+          const count = (wsConnectionsByIp.get(remoteIp) ?? 1) - 1;
+          if (count <= 0) {
+            wsConnectionsByIp.delete(remoteIp);
+          } else {
+            wsConnectionsByIp.set(remoteIp, count);
+          }
+        });
+        this.wss!.emit('connection', ws, req);
+      });
+    });
+
+    this.wss.on('connection', (ws, req) => {
+      const url = new URL((req as { url?: string }).url ?? '', `http://localhost`);
+
+      // Track active connections for graceful shutdown
+      this.activeConnections.add(ws);
+      ws.once('close', () => {
+        this.activeConnections.delete(ws);
+      });
+
+      const provider = this.config.telephonyProvider;
+      if (provider === 'telnyx') {
+        this.handleTelnyxStream(ws, url);
+      } else if (provider === 'plivo') {
+        this.handlePlivoStream(ws, url);
+      } else {
+        this.handleTwilioStream(ws, url);
+      }
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      // Default bind = 127.0.0.1 (loopback, safest). Set
+      // ``PATTER_BIND_HOST=0.0.0.0`` when the SDK runs inside a container
+      // whose port must be reachable from the host (e.g. ``docker run -p
+      // 8000:8000`` with a tunnel pointing at the host port — Docker's
+      // port-mapping cannot forward to a 127.0.0.1 listener inside the
+      // container because that's the container's own loopback).
+      const bindHost = process.env.PATTER_BIND_HOST ?? '127.0.0.1';
+      this.server!.once('error', reject);
+      this.server!.listen(port, bindHost, () => {
+        this.server!.off('error', reject);
+        getLogger().info(`Server on port ${port}`);
+        getLogger().info(`Webhook: https://${this.config.webhookUrl}`);
+        getLogger().info(`Phone:   ${this.config.phoneNumber}`);
+        // Warn if the agent runs a non-default Realtime model — DEFAULT_PRICING
+        // is calibrated for the default Realtime models (gpt-realtime-mini /
+        // gpt-4o-mini-realtime-preview, which share the same rates). Other
+        // models differ by 3-10x so cost display would under-report.
+        const model = this.agent.model ?? '';
+        const calibrated = ['gpt-realtime-mini', 'gpt-4o-mini-realtime-preview'];
+        if (model && !calibrated.includes(model) && model.includes('realtime')) {
+          // Dev-supplied string — sanitize to avoid ANSI/log-injection in
+          // aggregators.
+          getLogger().warn(
+            `Agent uses "${sanitizeLogValue(model)}" but DEFAULT_PRICING.openai_realtime is ` +
+            'calibrated for the default Realtime models (gpt-realtime-mini / ' +
+            'gpt-4o-mini-realtime-preview). Pass ' +
+            'Patter({ pricing: { openai_realtime: {...} } }) to set rates for ' +
+            'this model, otherwise the dashboard cost display will under-report.'
+          );
+        }
+        if (this.dashboard && this.dashboardMounted) {
+          getLogger().info('──── Dashboard ─────────────────────────────────────');
+          if (this.effectiveDashboardToken) {
+            // A token (explicit or auto-generated) is in effect — print the
+            // ready-to-use URL so the operator can click straight in.
+            getLogger().info(
+              `URL: http://127.0.0.1:${port}/?token=${this.effectiveDashboardToken}`,
+            );
+          } else {
+            // Served OPEN (loopback local dev, or allowInsecureDashboard).
+            getLogger().info(`URL: http://127.0.0.1:${port}/`);
+            getLogger().warn(
+              'Dashboard is enabled without authentication. ' +
+              'Set dashboardToken to protect call data. ' +
+              'This is safe for local development but should not be exposed on a public network.'
+            );
+          }
+          getLogger().info('────────────────────────────────────────────────────');
+        }
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * Handle a Telnyx ``call.machine.detection.ended`` event when AMD returns
+   * ``machine``: speak the configured voicemail message via ``actions/speak``
+   * then hang up via ``actions/hangup``. Mirrors the Python
+   * ``handle_amd_result`` helper.
+   */
+  private async handleTelnyxAmdVoicemail(callControlId: string): Promise<void> {
+    const telnyxKey = this.config.telnyxKey ?? '';
+    if (!callControlId || !telnyxKey || !this.voicemailMessage) {
+      return;
+    }
+    const encoded = encodeURIComponent(callControlId);
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${telnyxKey}`,
+    } as const;
+    // Heuristic playback-duration estimate — ~150 ms per character,
+    // capped at 30 s. Avoids cutting the voicemail mid-sentence on
+    // hangup. The proper fix is to subscribe to Telnyx
+    // ``call.speak.ended`` and hang up there; kept as a heuristic since
+    // the webhook plumbing change is broader than this handler. Same
+    // constant as Python ``telephony/telnyx.py::handle_amd_result`` —
+    // the SDKs previously hung up at 2x-different times (71 vs 150
+    // ms/char) for the same message.
+    const estimatedMs = Math.min(
+      30_000,
+      this.voicemailMessage.length * 150,
+    );
+    try {
+      const speakResp = await fetch(
+        `https://api.telnyx.com/v2/calls/${encoded}/actions/speak`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            payload: this.voicemailMessage,
+            voice: 'female',
+            language: 'en-US',
+          }),
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (!speakResp.ok) {
+        getLogger().warn(
+          `Telnyx voicemail speak failed: ${speakResp.status} ${(await speakResp.text()).slice(0, 200)}`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, estimatedMs));
+      await fetch(`https://api.telnyx.com/v2/calls/${encoded}/actions/hangup`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(10_000),
+      });
+      getLogger().info(`Voicemail dropped for Telnyx call ${sanitizeLogValue(callControlId)}`);
+    } catch (e) {
+      getLogger().warn(`Could not drop voicemail (Telnyx): ${String(e)}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stream handler helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Build a `LocalCallRecorder` for `callId`, or `null`.
+   *
+   * Resolution (mirrors Python `EmbeddedServer.create_local_recorder`):
+   *
+   * 1. `localRecording` falsy → `null` (feature off, default).
+   * 2. `localRecording` is a directory string → `<dir>/<call_id>.wav`.
+   * 3. call logging enabled → `<call_log_dir>/recording.wav` (next to
+   *    `metadata.json` / `transcript.jsonl`).
+   * 4. fallback → `./recordings/<call_id>.wav` under the CWD.
+   *
+   * Never throws: any setup failure (unwritable dir, …) logs a warning and
+   * returns `null` so the call proceeds unrecorded.
+   */
+  makeLocalRecorder(callId: string): LocalCallRecorder | null {
+    if (!this.localRecording) return null;
+    try {
+      const safeId = sanitizeLogValue(callId, 64).replace(/\//g, '_') || 'unknown';
+      let target: string;
+      if (typeof this.localRecording === 'string') {
+        target = nodePath.join(this.localRecording, `${safeId}.wav`);
+      } else {
+        const callDir = this.callLogger.enabled ? this.callLogger.callDir(callId) : null;
+        target = callDir !== null
+          ? nodePath.join(callDir, 'recording.wav')
+          : nodePath.join('recordings', `${safeId}.wav`);
+      }
+      return new LocalCallRecorder(target);
+    } catch (err) {
+      getLogger().warn(`Local recording disabled for ${sanitizeLogValue(callId)}: ${String(err)}`);
+      return null;
+    }
+  }
+
+  /** Build the shared StreamHandlerDeps for the current server configuration. */
+  private buildStreamHandlerDeps(bridge: TelephonyBridge): import('./stream-handler').StreamHandlerDeps {
+    const [wrappedStart, wrappedMetrics, wrappedEnd, wrappedTranscript] =
+      this.wrapLoggingCallbacks(bridge);
+    return {
+      config: this.config,
+      agent: this.agent,
+      bridge,
+      metricsStore: this.metricsStore,
+      pricing: this.pricing,
+      remoteHandler: this.remoteHandler,
+      onCallStart: wrappedStart,
+      onCallEnd: wrappedEnd,
+      onTranscript: wrappedTranscript,
+      onMessage: this.onMessage,
+      onMetrics: wrappedMetrics,
+      recording: this.recording,
+      makeLocalRecorder: (callId: string) => this.makeLocalRecorder(callId),
+      buildAIAdapter: (resolvedPrompt: string, toolsOverride?: readonly ToolDefinition[]) =>
+        buildAIAdapter(this.config, this.agent, resolvedPrompt, toolsOverride),
+      sanitizeVariables,
+      resolveVariables,
+      popPrewarmAudio: this.popPrewarmAudio,
+      popPrewarmedConnections: this.popPrewarmedConnections,
+      speechEvents: this.speechEvents,
+    };
+  }
+
+  /**
+   * Wrap user-supplied call lifecycle callbacks with CallLogger side-effects.
+   * When PATTER_LOG_DIR is unset, the logger is disabled and the returned
+   * wrappers degrade to just calling the user callbacks (still wrapped so
+   * the logger stays consistent with future configuration changes).
+   */
+  private wrapLoggingCallbacks(
+    bridge: TelephonyBridge,
+  ): [
+    typeof this.onCallStart,
+    typeof this.onMetrics,
+    typeof this.onCallEnd,
+    typeof this.onTranscript,
+  ] {
+    const logger = this.callLogger;
+    const agent = this.agent;
+    const userStart = this.onCallStart;
+    const userMetrics = this.onMetrics;
+    const userEnd = this.onCallEnd;
+    const userTranscript = this.onTranscript;
+
+    const agentSnapshot = (): Record<string, unknown> => {
+      const snap: Record<string, unknown> = {
+        provider: agent.provider,
+        model: (agent as { model?: string }).model,
+        voice: (agent as { voice?: string }).voice,
+        language: (agent as { language?: string }).language,
+      };
+      if (agent.stt && agent.tts && !('engine' in agent && (agent as { engine?: unknown }).engine)) {
+        snap.mode = 'pipeline';
+      }
+      return Object.fromEntries(Object.entries(snap).filter(([, v]) => v !== undefined));
+    };
+
+    const store = this.metricsStore;
+    const telemetry = this.telemetry;
+    const wrappedStart = async (
+      data: Record<string, unknown>,
+    ): Promise<void | Record<string, unknown> | undefined> => {
+      // Anonymous telemetry: per-call start (engine/provider/carrier +
+      // inbound/outbound + random correlation id; no PII). Pairs with
+      // `call_completed` for a connect→complete funnel. Fail-safe and O(1).
+      recordCallStarted(telemetry, {
+        providerMode: agent.provider ?? undefined,
+        telephonyProvider: bridge.telephonyProvider,
+        direction: data.direction,
+        callUid: this.telemetryCallUid(
+          typeof data.call_id === 'string' ? data.call_id : undefined,
+        ),
+      });
+      if (logger.enabled) {
+        const callId = typeof data.call_id === 'string' ? data.call_id : '';
+        // For outbound calls the bridge has no caller/callee in the WS query
+        // string (TwiML for outbound is inline ``<Stream url="…/outbound"/>``
+        // with no <Parameter> tags), so ``data.caller`` / ``data.callee`` are
+        // empty here. The active record in the store was populated by
+        // ``recordCallInitiated`` at dial time and holds the correct numbers
+        // — pull them from there before persisting metadata.json. Without
+        // this fallback every outbound call's metadata.json on disk has
+        // ``caller=""`` / ``callee=""``.
+        const dataCaller = typeof data.caller === 'string' ? data.caller : '';
+        const dataCallee = typeof data.callee === 'string' ? data.callee : '';
+        const active = callId ? store.getActive(callId) : undefined;
+        const resolvedCaller = dataCaller || active?.caller || '';
+        const resolvedCallee = dataCallee || active?.callee || '';
+        // Fire-and-forget: call logging must never block the voice flow.
+        const resolvedDirection =
+          (typeof data.direction === 'string' ? data.direction : '') ||
+          active?.direction ||
+          'inbound';
+        void logger
+          .logCallStart(callId, {
+            caller: resolvedCaller,
+            callee: resolvedCallee,
+            direction: resolvedDirection,
+            telephonyProvider: bridge.telephonyProvider,
+            providerMode: agent.provider ?? '',
+            agent: agentSnapshot(),
+          })
+          .catch((err) => getLogger().error(`call_log start error: ${String(err)}`));
+      }
+      // FORWARD the user's return value — it carries per-call agent
+      // overrides (see StreamHandler.applyCallOverrides). The old void
+      // wrapper swallowed it, so overrides only worked in Python.
+      if (userStart) return (await userStart(data)) as void | Record<string, unknown> | undefined;
+    };
+
+    const wrappedMetrics = async (data: Record<string, unknown>): Promise<void> => {
+      if (logger.enabled) {
+        const callId = typeof data.call_id === 'string' ? data.call_id : '';
+        const turn = data.turn;
+        if (turn && typeof turn === 'object') {
+          // Fire-and-forget: call logging must never block the voice flow.
+          void logger
+            .logTurn(callId, turn as Record<string, unknown>)
+            .catch((err) => getLogger().error(`call_log turn error: ${String(err)}`));
+          // Interrupted turn → operational ``barge_in`` event for
+          // events.jsonl. ``bargein_ms`` (detect → playback halted) may be
+          // missing when the stop timestamp was missed; the
+          // ``[interrupted]`` agent_text marker is the canonical interrupt
+          // signal in both SDKs.
+          const t = turn as {
+            turn_index?: number;
+            agent_text?: string;
+            latency?: { bargein_ms?: number };
+          };
+          const bargeinMs = t.latency?.bargein_ms;
+          if (t.agent_text === '[interrupted]' || bargeinMs !== undefined) {
+            void logger
+              .logEvent(callId, 'barge_in', {
+                turn_index: t.turn_index ?? null,
+                bargein_ms: bargeinMs ?? null,
+              })
+              .catch((err) => getLogger().error(`call_log event error: ${String(err)}`));
+          }
+        }
+      }
+      if (userMetrics) await userMetrics(data);
+    };
+
+    const wrappedEnd = async (data: Record<string, unknown>): Promise<void> => {
+      // Anonymous telemetry: per-call completion (engine/provider/carrier + raw
+      // duration/latency + matching correlation id; no cost, no PII). Fail-safe
+      // and O(1). pop=true so the uid is removed once the call reaches its
+      // terminal event and the map cannot leak.
+      recordCallCompleted(this.telemetry, {
+        outcome: 'completed',
+        metrics: data.metrics,
+        direction: data.direction,
+        callUid: this.telemetryCallUid(
+          typeof data.call_id === 'string' ? data.call_id : undefined,
+          true,
+        ),
+      });
+      if (logger.enabled) {
+        const callId = typeof data.call_id === 'string' ? data.call_id : '';
+        const metricsObj = (data.metrics ?? null) as
+          | (Record<string, unknown> & {
+              duration_seconds?: number;
+              turns?: unknown[];
+              cost?: Record<string, unknown>;
+              latency_avg?: Record<string, number>;
+              latency_p50?: Record<string, number>;
+              latency_p95?: Record<string, number>;
+              latency_p99?: Record<string, number>;
+            })
+          | null;
+        // Persist full LatencyBreakdown per percentile so the dashboard
+        // hydrate path can render stt/llm/tts breakdown for historical
+        // calls. Keep flat ``p50_ms/p95_ms/p99_ms`` for backward compat.
+        const latency = metricsObj
+          ? {
+              p50_ms: metricsObj.latency_p50?.total_ms ?? null,
+              p95_ms: metricsObj.latency_p95?.total_ms ?? null,
+              p99_ms: metricsObj.latency_p99?.total_ms ?? null,
+              avg: metricsObj.latency_avg ?? null,
+              p50: metricsObj.latency_p50 ?? null,
+              p95: metricsObj.latency_p95 ?? null,
+              p99: metricsObj.latency_p99 ?? null,
+            }
+          : null;
+        // Surface the terminal error code (set when the call ended
+        // abnormally) as an ``error`` event in events.jsonl and as the
+        // ``error`` field of metadata.json. Code only — never the message
+        // (may carry PII).
+        const errorCode =
+          typeof (metricsObj as { error_code?: unknown } | null)?.error_code === 'string'
+            ? ((metricsObj as { error_code: string }).error_code)
+            : '';
+        if (errorCode) {
+          void logger
+            .logEvent(callId, 'error', { error_code: errorCode })
+            .catch((err) => getLogger().error(`call_log event error: ${String(err)}`));
+        }
+        // Fire-and-forget: call logging must never block the voice flow.
+        void logger
+          .logCallEnd(callId, {
+            durationSeconds: metricsObj?.duration_seconds,
+            turns: metricsObj?.turns?.length,
+            cost: metricsObj?.cost ?? null,
+            latency,
+            error: errorCode || null,
+            // Present only when local recording was active for the call
+            // (set by StreamHandler.fireCallEnd on the payload).
+            recordingPath:
+              typeof data.recording_path === 'string' ? data.recording_path : null,
+          })
+          .catch((err) => getLogger().error(`call_log end error: ${String(err)}`));
+      }
+      try {
+        if (userEnd) await userEnd(data);
+      } finally {
+        // Resolve any pending call({ wait: true }) for this call. A
+        // media-stream end means the call connected: classify ``voicemail``
+        // when AMD tagged the callee as a machine, else ``answered``. Runs
+        // in a ``finally`` so a raising user callback can no longer strand
+        // the waiter until the backstop timeout. Mirrors Python.
+        const cid = typeof data.call_id === 'string' ? data.call_id : '';
+        if (cid) {
+          const cls = this.amdClass.get(cid);
+          const outcome: CallOutcome = cls === 'machine' ? 'voicemail' : 'answered';
+          this.resolveCompletion(cid, { outcome, status: 'completed', data });
+        }
+      }
+    };
+
+    const wrappedTranscript = async (data: Record<string, unknown>): Promise<void> => {
+      // Tool invocations surface as ``role="tool"`` transcript events (two
+      // per invocation: the call with ``tool_result=null``, then the
+      // result). Persist them to ``events.jsonl`` — documented as holding
+      // tool_call events since 0.6 but never written until now.
+      if (logger.enabled && data.role === 'tool' && typeof data.tool_name === 'string') {
+        const callId = typeof data.call_id === 'string' ? data.call_id : '';
+        const eventType = data.tool_result == null ? 'tool_call' : 'tool_result';
+        // Fire-and-forget: call logging must never block the voice flow.
+        void logger
+          .logEvent(callId, eventType, {
+            name: data.tool_name,
+            arguments: data.tool_args ?? {},
+            result: data.tool_result ?? null,
+          })
+          .catch((err) => getLogger().error(`call_log event error: ${String(err)}`));
+      }
+      if (userTranscript) await userTranscript(data);
+    };
+
+    return [wrappedStart, wrappedMetrics, wrappedEnd, wrappedTranscript];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Twilio WebSocket message parser (thin layer)
+  // ---------------------------------------------------------------------------
+
+  private handleTwilioStream(ws: WSWebSocket, url: URL): void {
+    const caller = url.searchParams.get('caller') ?? '';
+    const callee = url.searchParams.get('callee') ?? '';
+    const bridge = new TwilioBridge(this.config);
+    const handler = new StreamHandler(this.buildStreamHandlerDeps(bridge), ws, caller, callee);
+
+    // Per-connection FIFO: ws@8 invokes async listeners WITHOUT awaiting
+    // them, so back-to-back 20 ms media frames interleaved inside
+    // handleAudio (VAD state races, out-of-order STT feeds) and a rejection
+    // on the close path became an unhandled rejection that killed the whole
+    // process. Serialize every event onto one chain and contain errors.
+    let wsQueue: Promise<void> = Promise.resolve();
+    const enqueueWs = (fn: () => Promise<void>): void => {
+      wsQueue = wsQueue.then(fn).catch((err) => {
+        getLogger().error('Stream handler error:', err);
+        try {
+          handler.recordError(err);
+        } catch {
+          /* recordError must never throw the chain dead */
+        }
+      });
+    };
+
+    ws.on('message', (raw) => enqueueWs(async () => {
+      try {
+        let data: {
+          event: string;
+          streamSid?: string;
+          start?: { callSid?: string; customParameters?: Record<string, string> };
+          media?: { payload?: string };
+          mark?: { name?: string };
+          dtmf?: { digit?: string };
+        };
+        try {
+          data = JSON.parse(raw.toString()) as typeof data;
+        } catch (e) {
+          getLogger().error('Failed to parse WS message:', e);
+          return;
+        }
+        const event = data.event;
+
+        if (event === 'start') {
+          handler.setStreamSid(data.streamSid ?? '');
+          const callSid = data.start?.callSid ?? '';
+          const customParameters = data.start?.customParameters ?? {};
+          if (callSid) this.activeCallIds.set(ws, callSid);
+          await handler.handleCallStart(callSid, customParameters);
+        } else if (event === 'media') {
+          const payload = data.media?.payload ?? '';
+          // ``await`` keeps a rejection inside the outer try/catch — un-awaited
+          // it becomes an unhandled rejection that kills the process (Node 15+).
+          await handler.handleAudio(Buffer.from(payload, 'base64'));
+        } else if (event === 'mark') {
+          // Twilio confirms playback of a previously sent audio chunk.
+          // Forward the mark name so barge-in heuristics can compare it
+          // against the latest sent mark. Mirrors Python's
+          // ``twilio_handler.on_mark`` propagation.
+          const markName = String(data.mark?.name ?? '');
+          if (markName) await handler.onMark(markName);
+        } else if (event === 'dtmf') {
+          const digit = data.dtmf?.digit ?? '';
+          await handler.handleDtmf(digit);
+        } else if (event === 'stop') {
+          await handler.handleStop();
+        }
+      } catch (err) {
+        getLogger().error('Stream handler error:', err);
+        handler.recordError(err); // coarse error code for call_completed telemetry
+      }
+    }));
+
+    ws.on('close', () => enqueueWs(async () => {
+      this.activeCallIds.delete(ws);
+      await handler.handleWsClose();
+    }));
+
+    // An abrupt TCP reset emits 'error'; with no listener registered the
+    // EventEmitter throw became an uncaughtException killing every live call.
+    ws.on('error', (err) => {
+      getLogger().error(`Twilio media WS error: ${String(err)}`);
+      try {
+        ws.terminate();
+      } catch {
+        /* already closed */
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Telnyx WebSocket message parser (thin layer)
+  // ---------------------------------------------------------------------------
+
+  private handleTelnyxStream(ws: WSWebSocket, url: URL): void {
+    const caller = url.searchParams.get('caller') ?? '';
+    const callee = url.searchParams.get('callee') ?? '';
+    const bridge = new TelnyxBridge(this.config);
+    const handler = new StreamHandler(this.buildStreamHandlerDeps(bridge), ws, caller, callee);
+    let streamStarted = false;
+
+    // Per-connection FIFO: ws@8 invokes async listeners WITHOUT awaiting
+    // them, so back-to-back 20 ms media frames interleaved inside
+    // handleAudio (VAD state races, out-of-order STT feeds) and a rejection
+    // on the close path became an unhandled rejection that killed the whole
+    // process. Serialize every event onto one chain and contain errors.
+    let wsQueue: Promise<void> = Promise.resolve();
+    const enqueueWs = (fn: () => Promise<void>): void => {
+      wsQueue = wsQueue.then(fn).catch((err) => {
+        getLogger().error('Stream handler error:', err);
+        try {
+          handler.recordError(err);
+        } catch {
+          /* recordError must never throw the chain dead */
+        }
+      });
+    };
+
+    ws.on('message', (raw) => enqueueWs(async () => {
+      try {
+        // BUG #17 — Telnyx media-stream WebSocket uses ``event`` (not
+        // ``event_type``, which is a Call Control REST notification field),
+        // and the frame layout is ``{event, start|media|stop|dtmf}`` —
+        // mirror of the Python bridge.
+        let data: {
+          event?: string;
+          start?: { call_control_id?: string; from?: string; to?: string };
+          media?: { payload?: string; track?: string };
+          dtmf?: { digit?: string };
+          stop?: Record<string, unknown>;
+        };
+        try {
+          data = JSON.parse(raw.toString()) as typeof data;
+        } catch (e) {
+          getLogger().error('Failed to parse Telnyx WS message:', e);
+          return;
+        }
+
+        const event = data.event ?? '';
+        if (event === 'connected') return;  // first ping, nothing to do
+
+        if (event === 'start' && !streamStarted) {
+          streamStarted = true;
+          const callControlId = data.start?.call_control_id ?? '';
+          if (callControlId) this.activeCallIds.set(ws, callControlId);
+          await handler.handleCallStart(callControlId);
+          if (this.recording) {
+            try {
+              await bridge.startRecording?.(callControlId);
+            } catch (e) {
+              getLogger().warn(`Could not start recording: ${String(e)}`);
+            }
+          }
+        } else if (event === 'media') {
+          // BUG #19 — with ``stream_track=both_tracks`` Telnyx sends media
+          // for the caller leg (``track=inbound``) AND for our injected
+          // outbound leg (``track=outbound``). Forwarding the outbound
+          // echo feeds the agent its own voice and breaks turn detection.
+          const track = data.media?.track ?? 'inbound';
+          if (track !== 'inbound') return;
+          const audioChunk = data.media?.payload ?? '';
+          if (!audioChunk) return;
+          // ``await`` keeps a rejection inside the outer try/catch — un-awaited
+          // it becomes an unhandled rejection that kills the process (Node 15+).
+          await handler.handleAudio(Buffer.from(audioChunk, 'base64'));
+        } else if (event === 'dtmf') {
+          const digit = String(data.dtmf?.digit ?? '').trim();
+          if (digit) {
+            getLogger().info(`Telnyx DTMF received: ${digit}`);
+            await handler.handleDtmf(digit);
+          }
+        } else if (event === 'error') {
+          getLogger().warn(`Telnyx stream error: ${JSON.stringify(data)}`);
+        } else if (event === 'stop') {
+          await handler.handleStop();
+        }
+      } catch (err) {
+        getLogger().error('Stream handler error (Telnyx):', err);
+        handler.recordError(err); // coarse error code for call_completed telemetry
+      }
+    }));
+
+    ws.on('close', () => enqueueWs(async () => {
+      // Mirrors the Twilio/Plivo close handlers — without the delete the
+      // entry survives the call and the Map grows for the server's lifetime.
+      this.activeCallIds.delete(ws);
+      await handler.handleWsClose();
+    }));
+
+    ws.on('error', (err) => {
+      getLogger().error(`Telnyx media WS error: ${String(err)}`);
+      try {
+        ws.terminate();
+      } catch {
+        /* already closed */
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Plivo WebSocket message parser (thin layer)
+  // ---------------------------------------------------------------------------
+
+  private handlePlivoStream(ws: WSWebSocket, url: URL): void {
+    const caller = url.searchParams.get('caller') ?? '';
+    const callee = url.searchParams.get('callee') ?? '';
+    const bridge = new PlivoBridge(this.config);
+    const handler = new StreamHandler(this.buildStreamHandlerDeps(bridge), ws, caller, callee);
+
+    // Per-connection FIFO: ws@8 invokes async listeners WITHOUT awaiting
+    // them, so back-to-back 20 ms media frames interleaved inside
+    // handleAudio (VAD state races, out-of-order STT feeds) and a rejection
+    // on the close path became an unhandled rejection that killed the whole
+    // process. Serialize every event onto one chain and contain errors.
+    let wsQueue: Promise<void> = Promise.resolve();
+    const enqueueWs = (fn: () => Promise<void>): void => {
+      wsQueue = wsQueue.then(fn).catch((err) => {
+        getLogger().error('Stream handler error:', err);
+        try {
+          handler.recordError(err);
+        } catch {
+          /* recordError must never throw the chain dead */
+        }
+      });
+    };
+
+    ws.on('message', (raw) => enqueueWs(async () => {
+      try {
+        // Plivo media-stream frames: ``start`` (callId/streamId/mediaFormat),
+        // ``media``, ``playedStream`` (checkpoint ack ≈ Twilio mark), ``dtmf``,
+        // ``clearedAudio`` / ``playFailed`` / ``error``, ``stop``. Mirror of
+        // the Python ``plivo_stream_bridge``.
+        let data: {
+          event?: string;
+          start?: { callId?: string; streamId?: string; mediaFormat?: { encoding?: string; sampleRate?: number } };
+          extra_headers?: string;
+          media?: { payload?: string };
+          dtmf?: { digit?: string };
+          name?: string;
+          reason?: string;
+        };
+        try {
+          data = JSON.parse(raw.toString()) as typeof data;
+        } catch (e) {
+          getLogger().error('Failed to parse Plivo WS message:', e);
+          return;
+        }
+        const event = data.event ?? '';
+
+        if (event === 'start') {
+          // Plivo's CallUUID arrives here as ``callId`` and is the id used for
+          // hangup / transfer / recording / cost REST calls.
+          handler.setStreamSid(data.start?.streamId ?? '');
+          const callId = data.start?.callId ?? '';
+          if (callId) this.activeCallIds.set(ws, callId);
+          // Plivo's extra_headers are the metadata channel mirroring Twilio's
+          // <Parameter> customParameters: developer-supplied headers become
+          // prompt template variables. Without this they were silently dropped.
+          const customParams = plivoInboundCustomParams(data.extra_headers ?? '', caller, callee);
+          await handler.handleCallStart(callId, customParams);
+          // ``recording: true`` parity: Python's Plivo bridge starts the
+          // recording here; the generic Twilio-credential-gated helper never
+          // covered Plivo, so the flag silently no-op'd in TS.
+          if (this.recording && callId) {
+            try {
+              await bridge.startRecording?.(callId);
+            } catch (e) {
+              getLogger().warn(`Could not start Plivo recording: ${String(e)}`);
+            }
+          }
+        } else if (event === 'media') {
+          const payload = data.media?.payload ?? '';
+          // ``await`` keeps a rejection inside the outer try/catch — un-awaited
+          // it becomes an unhandled rejection that kills the process (Node 15+).
+          if (payload) await handler.handleAudio(Buffer.from(payload, 'base64'));
+        } else if (event === 'playedStream') {
+          // Checkpoint acknowledgement — the analogue of a Twilio mark.
+          const markName = String(data.name ?? '');
+          if (markName) await handler.onMark(markName);
+        } else if (event === 'dtmf') {
+          const digit = String(data.dtmf?.digit ?? '').trim();
+          if (digit) await handler.handleDtmf(digit);
+        } else if (event === 'playFailed' || event === 'error') {
+          getLogger().warn(`Plivo ${event}: ${data.reason ?? 'unknown'}`);
+        } else if (event === 'stop') {
+          await handler.handleStop();
+        }
+      } catch (err) {
+        getLogger().error('Stream handler error (Plivo):', err);
+        handler.recordError(err); // coarse error code for call_completed telemetry
+      }
+    }));
+
+    ws.on('close', () => enqueueWs(async () => {
+      this.activeCallIds.delete(ws);
+      await handler.handleWsClose();
+    }));
+
+    ws.on('error', (err) => {
+      getLogger().error(`Plivo media WS error: ${String(err)}`);
+      try {
+        ws.terminate();
+      } catch {
+        /* already closed */
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Graceful shutdown
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Gracefully stop the server.
+   *
+   * 1. Stop accepting new connections (close the HTTP server).
+   * 2. Send close to all active WebSockets.
+   * 3. Wait up to 10 seconds for active calls to finish.
+   * 4. Force-close remaining connections.
+   * 5. Close the HTTP server.
+   */
+  async stop(): Promise<void> {
+    if (!this.server) return;
+
+    // 1. Stop accepting new HTTP connections
+    const httpClosePromise = new Promise<void>((resolve) => {
+      this.server!.close(() => resolve());
+    });
+
+    // 2. Hang up all active telephony calls via provider API
+    const provider = this.config.telephonyProvider;
+    for (const [ws, callId] of this.activeCallIds) {
+      try {
+        const bridge =
+          provider === 'telnyx'
+            ? new TelnyxBridge(this.config)
+            : provider === 'plivo'
+              ? new PlivoBridge(this.config)
+              : new TwilioBridge(this.config);
+        await bridge.endCall(callId, ws);
+      } catch { /* best effort */ }
+    }
+    this.activeCallIds.clear();
+
+    // 3. Send close to all active WebSocket connections
+    for (const ws of this.activeConnections) {
+      try {
+        ws.close(1001, 'Server shutting down');
+      } catch {
+        // Connection may already be closing
+      }
+    }
+
+    // 3. Wait up to 10 seconds for active calls to drain
+    if (this.activeConnections.size > 0) {
+      getLogger().info(`Waiting for ${this.activeConnections.size} active connection(s) to close...`);
+      let checkInterval: ReturnType<typeof setInterval> | undefined;
+      const drainPromise = new Promise<void>((resolve) => {
+        checkInterval = setInterval(() => {
+          if (this.activeConnections.size === 0) {
+            clearInterval(checkInterval!);
+            resolve();
+          }
+        }, 100);
+      });
+      const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, GRACEFUL_SHUTDOWN_TIMEOUT_MS));
+      await Promise.race([drainPromise, timeoutPromise]);
+      clearInterval(checkInterval!);
+    }
+
+    // 4. Force-close remaining connections
+    if (this.activeConnections.size > 0) {
+      getLogger().info(`Force-closing ${this.activeConnections.size} remaining connection(s)`);
+      for (const ws of this.activeConnections) {
+        try {
+          ws.terminate();
+        } catch {
+          // Already terminated
+        }
+      }
+      this.activeConnections.clear();
+    }
+
+    // 5. Wait for HTTP server to fully close
+    await httpClosePromise;
+    this.server = null;
+    this.wss = null;
+  }
+}

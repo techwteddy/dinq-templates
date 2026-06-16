@@ -1,0 +1,232 @@
+---
+title: "LLM"
+description: "Pick an LLM provider the same way you pick STT and TTS."
+icon: "brain"
+---
+
+# LLM (Voice Mode)
+
+Patter supports two voice architectures:
+
+| Mode | How to enable | When to use |
+|------|---------------|-------------|
+| **Engine (speech-to-speech)** | `phone.agent(engine=OpenAIRealtime(...))` or `engine=ElevenLabsConvAI(...)` | Lowest-latency speech-to-speech. A single provider handles STT + LLM + TTS. |
+| **Pipeline (STT + LLM + TTS)** | `phone.agent(stt=..., llm=..., tts=...)` (omit `engine=`) | Full control. Mix and match providers per stage. |
+
+See [Engines](/python-sdk/engines) for engine-mode reference. This page focuses on the `llm=` selector in pipeline mode.
+
+## Pipeline mode
+
+Compose the three stages independently. Each provider reads its credentials from the environment by default.
+
+```python
+import asyncio
+from getpatter import Patter, Twilio, DeepgramSTT, AnthropicLLM, ElevenLabsTTS
+
+phone = Patter(carrier=Twilio(), phone_number="+15550001234")
+
+agent = phone.agent(
+    stt=DeepgramSTT(),                    # DEEPGRAM_API_KEY
+    llm=AnthropicLLM(),                   # ANTHROPIC_API_KEY
+    tts=ElevenLabsTTS(voice_id="rachel"), # ELEVENLABS_API_KEY
+    system_prompt="You are a helpful assistant.",
+    first_message="Hi!",
+)
+
+async def main():
+    await phone.serve(agent)
+
+asyncio.run(main())
+```
+
+Tool calling works across every provider — each adapter normalizes its vendor-specific streaming format to Patter's unified `{type: "text" | "tool_call" | "done"}` chunk protocol, so your tools are defined once and run everywhere.
+
+<Note>
+`llm=` and `on_message` are **mutually exclusive**. Pass one or the other on `serve()` — passing both raises a clear error at `serve()` time. When `engine=` is set, `llm=` is ignored (with a one-time warning in the logs). If neither `llm=` nor `on_message` is passed and `OPENAI_API_KEY` is set, Patter auto-constructs the default OpenAI LLM loop — existing 0.5.0 code still works.
+</Note>
+
+## Supported LLM providers
+
+| Flat import | Namespaced import | Env var | Install extra |
+|---|---|---|---|
+| `OpenAILLM` | `getpatter.llm.openai.LLM` | `OPENAI_API_KEY` | included |
+| `AnthropicLLM` | `getpatter.llm.anthropic.LLM` | `ANTHROPIC_API_KEY` | `getpatter[anthropic]` |
+| `GroqLLM` | `getpatter.llm.groq.LLM` | `GROQ_API_KEY` | `getpatter[groq]` |
+| `CerebrasLLM` | `getpatter.llm.cerebras.LLM` | `CEREBRAS_API_KEY` | `getpatter[cerebras]` |
+| `GoogleLLM` | `getpatter.llm.google.LLM` | `GEMINI_API_KEY` (falls back to `GOOGLE_API_KEY`) | `getpatter[google]` |
+
+All classes accept `api_key: str | None = None` and fall back to the listed env var when it is omitted.
+
+### OpenAILLM
+
+OpenAI Chat Completions with streaming + tool calling. Default model `"gpt-4o-mini"`. For other OpenAI-compatible endpoints use the dedicated wrappers (`GroqLLM`, `CerebrasLLM`) — they subclass `OpenAILLMProvider` with the right `base_url`.
+
+```python
+from getpatter import OpenAILLM                    # flat
+from getpatter.llm import openai                   # namespaced
+
+llm = OpenAILLM()                                   # reads OPENAI_API_KEY
+llm = openai.LLM(api_key="sk-...", model="gpt-4o-mini")
+```
+
+### AnthropicLLM
+
+Anthropic Messages API with native streaming and `tool_use` blocks, normalised to Patter's chunk protocol. Default model `"claude-haiku-4-5-20251001"`, default `max_tokens=1024` (Anthropic requires an explicit cap on every request).
+
+Prompt caching is enabled by default — `cache_control: { type: "ephemeral" }` is attached to the system prompt and the last tool block, which cuts time-to-first-token on long system prompts and large tool catalogs. Pass `prompt_caching=False` to disable.
+
+```python
+from getpatter import AnthropicLLM                 # flat
+from getpatter.llm import anthropic                # namespaced
+
+llm = AnthropicLLM()                                # reads ANTHROPIC_API_KEY
+llm = anthropic.LLM(
+    api_key="sk-ant-...",
+    model="claude-haiku-4-5-20251001",
+    max_tokens=2048,
+)
+```
+
+Install: `pip install 'getpatter[anthropic]'`.
+
+### GroqLLM
+
+Hardware-accelerated Llama inference via Groq's OpenAI-compatible Chat Completions API at `https://api.groq.com/openai/v1`. Default model `"llama-3.3-70b-versatile"`.
+
+```python
+from getpatter import GroqLLM                      # flat
+from getpatter.llm import groq                     # namespaced
+
+llm = GroqLLM()                                     # reads GROQ_API_KEY
+llm = groq.LLM(api_key="gsk_...", model="llama-3.3-70b-versatile")
+```
+
+Install: `pip install 'getpatter[groq]'`.
+
+### CerebrasLLM
+
+Cerebras Inference API (OpenAI-compatible) at `https://api.cerebras.ai/v1`. Default model `"gpt-oss-120b"` — production tier, ~3000 tok/sec on WSE-3, no deprecation date. Pass `model="llama3.1-8b"` (8B params, sub-100ms TTFT) for the smaller free-tier alternative. The 404 `model_not_found` error includes a recovery hint listing other valid IDs (`qwen-3-235b-a22b-instruct-2507`, `llama-3.3-70b` on paid tier).
+
+Supports forwarding all OpenAI-style sampling kwargs (`response_format`, `parallel_tool_calls`, `tool_choice`, `seed`, `top_p`, `frequency_penalty`, `presence_penalty`, `stop`) and optional msgpack + gzip payload compression (enabled by default) — see [Cerebras payload optimization](https://inference-docs.cerebras.ai/payload-optimization). Failures retry once with exponential backoff and honour `x-ratelimit-reset-*` advisory headers; terminal errors raise `PatterError`.
+
+```python
+from getpatter import CerebrasLLM                  # flat
+from getpatter.llm import cerebras                 # namespaced
+
+llm = CerebrasLLM()                                 # reads CEREBRAS_API_KEY
+llm = cerebras.LLM(
+    api_key="csk-...",
+    model="gpt-oss-120b",                           # default
+    gzip_compression=True,                          # defaults to True
+    msgpack_encoding=True,                          # defaults to True
+    response_format={"type": "json_object"},        # OpenAI-style structured outputs
+)
+```
+
+Install: `pip install 'getpatter[cerebras]'`.
+
+### GoogleLLM
+
+Google Gemini via the `google-genai` SDK. Supports the Gemini Developer API (API key) and Vertex AI (GCP project + location). Default model `"gemini-2.5-flash"`.
+
+```python
+from getpatter import GoogleLLM                    # flat
+from getpatter.llm import google                   # namespaced
+
+llm = GoogleLLM()                                   # reads GEMINI_API_KEY, falls back to GOOGLE_API_KEY
+llm = google.LLM(api_key="AIza...", model="gemini-2.5-flash")
+
+# Vertex AI
+llm = google.LLM(vertexai=True, project="my-gcp-project", location="us-central1")
+```
+
+Install: `pip install 'getpatter[google]'`.
+
+### CustomLLM (any OpenAI-compatible endpoint)
+
+The industry-standard "Custom LLM" pattern: point Patter's pipeline at **any** endpoint that speaks the OpenAI Chat Completions protocol (SSE streaming, optional tool calls). One provider covers:
+
+- **agent runtimes** — [Hermes](/integrations/hermes) and [OpenClaw](/integrations/openclaw) presets (`HermesLLM`, `OpenClawLLM`) subclass this same engine with the right defaults baked in; prefer them when they exist,
+- **local inference gateways** — Ollama, vLLM, LM Studio (keyless OK),
+- **your own service** implementing `/chat/completions`.
+
+```python
+from getpatter import CustomLLM                    # flat
+from getpatter.llm import custom                   # namespaced
+
+# Your own agent service:
+llm = CustomLLM(
+    base_url="http://127.0.0.1:9000/v1",
+    model="my-agent",
+    api_key_env="MY_AGENT_KEY",
+    timeout=120.0,                                  # agent runtimes run tools before replying
+)
+
+# Keyless local gateway (Ollama / vLLM / LM Studio):
+llm = custom.LLM(base_url="http://127.0.0.1:11434/v1", model="llama3.1")
+
+# Session continuity on a runtime that scopes sessions/memory by header:
+llm = CustomLLM(
+    base_url="http://127.0.0.1:9000/v1",
+    model="my-agent",
+    session_id_header="X-My-Session-Id",            # value = <prefix><call_id>
+    session_id_prefix="patter-call-",
+    session_key_header="X-My-Memory-Key",
+    session_key_from="caller_hash",                 # per-caller memory: patter-caller-<hash>
+)
+```
+
+`CustomLLM` is the canonical name for the generic engine also exported as `OpenAICompatibleLLM` — both construct the same class. Barge-in cancellation (including the pre-first-token abort for slow agent runtimes), the long-turn filler (`long_turn_message`), the spoken error fallback (`llm_error_message`), and usage-based cost attribution all work unchanged. All OpenAI-style sampling kwargs are forwarded.
+
+## Custom LLM via `on_message`
+
+For cases the five built-in providers don't cover — multi-model routing, local `llama.cpp`, an internal gateway, caching layers — drop `llm=` and plug an async `on_message` callback instead:
+
+```python
+import asyncio
+from getpatter import Patter, Twilio, DeepgramSTT, ElevenLabsTTS
+
+phone = Patter(carrier=Twilio(), phone_number="+15550001234")
+
+agent = phone.agent(
+    stt=DeepgramSTT(),
+    tts=ElevenLabsTTS(voice_id="rachel"),
+    system_prompt="You are a helpful assistant.",
+)
+
+async def handle_message(event) -> str:
+    # Route to any model you like — local llama.cpp, a private gateway, etc.
+    return f"You said: {event['text']}. How can I help?"
+
+async def main():
+    await phone.serve(agent, on_message=handle_message)
+
+asyncio.run(main())
+```
+
+<Warning>
+`on_message` and `llm=` cannot be used together. Combining them raises a clear error at `serve()` time — pick one.
+</Warning>
+
+## Advanced: building a custom LLM provider
+
+Three primitives are exported from the package barrel for users who need to plug in a custom LLM or tool dispatcher:
+
+```python
+from getpatter import LLMChunk, DefaultToolExecutor
+```
+
+- `LLMChunk` — the streaming-output type yielded by every `LLMProvider.stream(...)` implementation. Carries either a partial text delta, a tool-call delta, or a stream-end marker.
+- `DefaultToolExecutor` — the default tool dispatcher used by `LLMLoop`. Constructs from a `tools=` list and resolves both Python `handler=` callables and `webhook_url=` HTTP tools. Override its hooks to swap in custom error handling, telemetry, or authentication.
+- `OpenAILLMProvider` — the parent class shared by `OpenAILLM`, `GroqLLM`, `CerebrasLLM`. Sampling kwargs (`temperature`, `top_p`, `seed`, `tool_choice`, `response_format`, …) live here and are forwarded by every subclass.
+
+These are stable public symbols mirrored byte-for-byte by the TypeScript SDK.
+
+## What's next
+
+<CardGroup cols={2}>
+  <Card title="STT" icon="microphone" href="/python-sdk/stt">STT providers for pipeline mode.</Card>
+  <Card title="TTS" icon="volume" href="/python-sdk/tts">TTS providers for pipeline mode.</Card>
+  <Card title="Tools" icon="wrench" href="/python-sdk/tools">Function calling (works across every LLM).</Card>
+  <Card title="Engines" icon="bolt" href="/python-sdk/engines">Speech-to-speech engines (OpenAI Realtime, ElevenLabs ConvAI).</Card>
+</CardGroup>

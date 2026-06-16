@@ -1,0 +1,86 @@
+---
+title: "Rime TTS"
+description: "Arcana and Mist model families via Rime's HTTP endpoint."
+icon: "waveform"
+---
+
+# Rime TTS
+
+`RimeTTS` targets the [Rime HTTP endpoint](https://rime.ai/docs). Both Arcana (high fidelity) and Mist (low latency) model families are supported. The provider requests `audio/pcm` and yields raw PCM_S16LE chunks at the configured sample rate.
+
+## Install
+
+```bash
+pip install "getpatter[rime]"
+```
+
+## Usage
+
+```python
+# Namespaced import
+from getpatter.tts import rime
+
+tts = rime.TTS()                                          # reads RIME_API_KEY
+tts = rime.TTS(model="arcana", speaker="astra")
+
+# Flat alias (equivalent)
+from getpatter import RimeTTS
+
+tts = RimeTTS(model="arcana", speaker="astra")
+```
+
+In an agent:
+
+```python
+import asyncio
+from getpatter import Patter, Twilio, DeepgramSTT, RimeTTS
+
+phone = Patter(carrier=Twilio(), phone_number="+15550001234")
+
+agent = phone.agent(
+    stt=DeepgramSTT(),                                    # DEEPGRAM_API_KEY from env
+    tts=RimeTTS(model="arcana", speaker="astra"),         # RIME_API_KEY from env
+    system_prompt="You are a helpful assistant.",
+)
+
+asyncio.run(phone.serve(agent))
+```
+
+Mist v2 — low-latency, streaming-friendly:
+
+```python
+from getpatter import RimeTTS
+
+fast = RimeTTS(model="mistv2", speaker="cove", speed_alpha=1.1, reduce_latency=True)
+```
+
+## Low-level usage
+
+```python
+from getpatter.providers.rime_tts import RimeTTS as _LowLevelTTS
+
+tts = _LowLevelTTS(
+    api_key="...",           # or RIME_API_KEY env var
+    model="arcana",
+    speaker="astra",
+    lang="eng",
+    sample_rate=16000,
+)
+
+async for chunk in tts.synthesize("Hello from the Patter pipeline."):
+    ...
+
+await tts.close()
+```
+
+## Options (selection)
+
+| Option | Default | Notes |
+|---|---|---|
+| `api_key` | `None` | Reads from `RIME_API_KEY` when omitted. |
+| `model` | `"arcana"` | `"arcana"` or any `mist*` model. |
+| `speaker` | `"astra"` / `"cove"` | Default depends on model. |
+| `lang` | `"eng"` | Rime language code. |
+| `sample_rate` | `16000` | Hz. |
+| `temperature`, `top_p`, `max_tokens`, `repetition_penalty` | — | Arcana only. |
+| `speed_alpha`, `reduce_latency`, `pause_between_brackets`, `phonemize_between_brackets` | — | Mist only. |

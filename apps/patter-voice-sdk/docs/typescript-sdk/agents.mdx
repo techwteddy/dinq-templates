@@ -1,0 +1,182 @@
+---
+title: "Agents"
+description: "Define your agent's voice, model, tools, and behavior for phone calls."
+icon: "robot"
+---
+
+# Agents
+
+An agent configuration defines the personality, capabilities, and behavior of your AI voice assistant. Use `phone.agent()` to validate your agent config before connecting it to a phone number.
+
+## Basic Agent
+
+The simplest form leans on env-var fallback and a default engine (`OpenAIRealtime`):
+
+```typescript
+import { Patter, Twilio } from "getpatter";
+
+const phone = new Patter({ carrier: new Twilio(), phoneNumber: "+15550001234" });
+
+const agent = phone.agent({
+  systemPrompt: "You are a helpful customer support agent for Acme Corp.",
+  firstMessage: "Hello! How can I help you today?",
+});   // defaults to engine: OpenAIRealtime, reads OPENAI_API_KEY
+```
+
+To pick the engine explicitly (flat imports):
+
+```typescript
+import { Patter, Twilio, OpenAIRealtime } from "getpatter";
+
+const phone = new Patter({ carrier: new Twilio(), phoneNumber: "+15550001234" });
+
+const agent = phone.agent({
+  engine: new OpenAIRealtime({ voice: "nova" }),
+  systemPrompt: "You are a helpful customer support agent for Acme Corp.",
+});
+```
+
+Pipeline mode (pick STT, LLM, TTS independently):
+
+```typescript
+import { Patter, Twilio, DeepgramSTT, AnthropicLLM, ElevenLabsTTS } from "getpatter";
+
+const phone = new Patter({ carrier: new Twilio(), phoneNumber: "+15550001234" });
+
+const agent = phone.agent({
+  stt: new DeepgramSTT({ endpointingMs: 80 }),           // DEEPGRAM_API_KEY from env
+  llm: new AnthropicLLM(),                               // ANTHROPIC_API_KEY from env
+  tts: new ElevenLabsTTS({ voiceId: "rachel" }),         // ELEVENLABS_API_KEY from env
+  systemPrompt: "You are a helpful assistant.",
+  firstMessage: "Hi!",
+});
+```
+
+Available LLM providers: `OpenAILLM`, `AnthropicLLM`, `GroqLLM`, `CerebrasLLM`, `GoogleLLM`. Tool calling works across all five. See [LLM](/typescript-sdk/llm) for the full reference. For fully custom logic (multi-model routing, local models), drop `llm` and pass an `onMessage` callback to `serve()` instead — `llm` and `onMessage` are mutually exclusive.
+
+## AgentOptions
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `systemPrompt` | `string` | Yes | — | Instructions that define the agent's persona and behavior. |
+| `engine` | `OpenAIRealtime \| OpenAIRealtime2 \| ElevenLabsConvAI` | No | defaults to `OpenAIRealtime` when none provided and pipeline pieces are absent | End-to-end engine. See [Engines](/typescript-sdk/engines). Omit for pipeline mode. |
+| `stt` | `STTProvider` | No | — | STT instance for pipeline mode (`new DeepgramSTT()`, `new CartesiaSTT()`, ...). |
+| `llm` | `LLMProvider` | No | — | LLM instance for pipeline mode (`new AnthropicLLM()`, `new GroqLLM()`, ...). Mutually exclusive with `onMessage` on `serve()`. Ignored when `engine` is set. See [LLM](/typescript-sdk/llm). |
+| `tts` | `TTSProvider` | No | — | TTS instance for pipeline mode (`new ElevenLabsTTS()`, `new RimeTTS()`, ...). |
+| `voice` | `string` | No | Provider default | Voice ID. Usually inferred from the engine or TTS instance. |
+| `model` | `string` | No | `"gpt-4o-mini-realtime-preview"` | Model ID for OpenAI Realtime. Usually inferred from the engine. |
+| `language` | `string` | No | `"en"` | BCP-47 language code. |
+| `firstMessage` | `string` | No | — | Greeting spoken when the call connects. |
+| `tools` | `ToolDefinition[]` | No | — | Function calling tools. See [Tools](/typescript-sdk/tools). |
+| `variables` | `Record<string, string>` | No | — | Dynamic variables for `{placeholder}` substitution in `systemPrompt`. |
+| `guardrails` | `Guardrail[]` | No | — | Output guardrails. See [Guardrails](/typescript-sdk/guardrails). |
+| `hooks` | `PipelineHooks` | No | — | Pipeline hooks for intercepting STT/TTS processing. |
+| `textTransforms` | `((text: string) => string)[]` | No | — | Text transformation functions for LLM responses. |
+| `vad` | `VADProvider` | No | — | Voice activity detection provider. |
+| `audioFilter` | `AudioFilter` | No | — | Audio preprocessing filter. |
+| `backgroundAudio` | `BackgroundAudioPlayer` | No | — | Background audio player. |
+| `bargeInThresholdMs` | `number` | No | `300` | Barge-in hang-over window (ms). Set to `0` to disable. |
+| `aggressiveFirstFlush` | `boolean` | No | `false` | Opt-in low-latency mode: emits the first clause on soft punctuation (`,`, em-dash) once the buffer reaches ≥40 chars. Saves 200–500 ms TTFA. Hard-disabled when `language="it"` (Italian punctuation patterns are incompatible). |
+| `disablePhonePreamble` | `boolean` | No | `false` | When `false` (default), Patter prepends a phone-friendly preamble to `systemPrompt` that instructs the LLM to avoid markdown, emojis, bullet lists, and code blocks; spell out numbers and dates; and keep replies short. Set to `true` to ship `systemPrompt` verbatim. |
+| `prewarmFirstMessage` | `boolean` | No | `false` (pipeline mode only) | Pre-render `firstMessage` to TTS audio bytes during the ringing window and stream the cached buffer the instant the call connects, eliminating the 200–700 ms TTS first-byte latency on the greeting. Realtime / ConvAI engines silently ignore the flag (with a `WARN` log) — only pipeline mode consumes the cache. Trade-off: pays for the greeting's TTS even when the call rings out unanswered (~$0.001–$0.005 per ring). Opt in explicitly for inbound calls and low-noise deployments: `prewarmFirstMessage: true`. |
+| `provider` | `'openai_realtime' \| 'elevenlabs_convai' \| 'pipeline'` | No | derived | Provider mode. Normally derived from `engine` / `stt` + `tts`. Pass `'pipeline'` explicitly when building a pipeline-mode agent without an engine instance. |
+
+## Validation Rules
+
+The `phone.agent()` method validates:
+
+- **Engine / pipeline**: exactly one of `engine`, `(stt` + `tts)` must resolve correctly.
+- **Tools**: must be an array. Each tool requires a `name` field and either a `webhookUrl` or a `handler`.
+- **Variables**: must be a plain object (not an array).
+
+## Dynamic Variables
+
+Use `{placeholder}` syntax in your system prompt. Variables are replaced at call time:
+
+```typescript
+const agent = phone.agent({
+  systemPrompt: "You are a support agent for {company}. The caller's name is {caller_name}.",
+  variables: {
+    company: "Acme Corp",
+    caller_name: "John",
+  },
+});
+```
+
+Variables can also be overridden per-call when making outbound calls. See [Features](/typescript-sdk/features).
+
+## System Tools
+
+Two system tools are automatically injected into every agent:
+
+- **`transfer_call`** — Transfers the call to a specified phone number (E.164 format).
+- **`end_call`** — Ends the current call with an optional reason.
+
+You do not need to define these in your `tools` array. The AI model can invoke them based on conversation context.
+
+## Voice Activity Detection (VAD)
+
+Pipeline-mode agents can plug a VAD provider into the `vad` option to gate STT around real speech and drive barge-in detection. The SDK ships **Silero VAD** (an ONNX model, ~1 MB) with a telephony-tuned factory:
+
+```typescript
+import { SileroVAD, DeepgramSTT, AnthropicLLM, ElevenLabsTTS } from "getpatter";
+
+// Recommended for any phone-call deployment.
+const vad = await SileroVAD.forPhoneCall();
+
+const agent = phone.agent({
+  stt: new DeepgramSTT(),
+  llm: new AnthropicLLM(),
+  tts: new ElevenLabsTTS({ voiceId: "rachel" }),
+  systemPrompt: "You are a helpful assistant.",
+  vad,
+});
+```
+
+`SileroVAD.forPhoneCall(options?)` is identical to `SileroVAD.load(...)` but pins `sampleRate` to 16 000 Hz — the only sample rate Patter's pipeline-mode audio bus uses (8 kHz mulaw from Twilio is upsampled to 16 kHz PCM before reaching the VAD). All other parameters use the upstream `snakers4/silero-vad` defaults:
+
+| Field | Default | Upstream equivalent |
+|-------|---------|---------------------|
+| `activationThreshold` | `0.8` | `threshold` (tuned for telephony, not studio) |
+| `deactivationThreshold` | `0.65` | `neg_threshold = threshold − 0.15` (tuned for telephony) |
+| `minSpeechDuration` | `0.25` s | `min_speech_duration_ms = 250` |
+| `minSilenceDuration` | `0.1` s | `min_silence_duration_ms = 100` |
+| `prefixPaddingDuration` | `0.03` s | `speech_pad_ms = 30` |
+
+Override per call site rather than as a global default. A common tweak: deployments that experience truncation on natural pauses raise `minSilenceDuration` to 0.5–1.0 s:
+
+```typescript
+const vad = await SileroVAD.forPhoneCall({ minSilenceDuration: 0.5 });
+```
+
+<Note>
+`SileroVAD.forPhoneCall()` returns a `Promise<SileroVAD>` — `await` it once at process startup before constructing your agent. The underlying ONNX session is reused across calls.
+</Note>
+
+## Engine vs Pipeline Mode
+
+```typescript
+import { OpenAIRealtime, ElevenLabsConvAI, DeepgramSTT, AnthropicLLM, ElevenLabsTTS } from "getpatter";
+
+// OpenAI Realtime — end-to-end
+const agent = phone.agent({
+  engine: new OpenAIRealtime(),
+  systemPrompt: "...",
+});
+
+// ElevenLabs Conversational AI — natural voices
+const agent = phone.agent({
+  engine: new ElevenLabsConvAI({ agentId: "agent_abc123" }),
+  systemPrompt: "...",
+});
+
+// Pipeline — pick STT, LLM, TTS independently
+const agent = phone.agent({
+  stt: new DeepgramSTT(),
+  llm: new AnthropicLLM(),
+  tts: new ElevenLabsTTS({ voiceId: "rachel" }),
+  systemPrompt: "...",
+});
+```
+
+See [LLM](/typescript-sdk/llm) for a deeper comparison.

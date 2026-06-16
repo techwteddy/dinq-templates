@@ -1,0 +1,410 @@
+---
+title: "API Reference"
+description: "Complete type definitions, interfaces, error classes, and exports."
+icon: "terminal"
+---
+
+# API Reference
+
+Complete reference for all types, interfaces, and exports in the `getpatter` package.
+
+## Patter Class
+
+### Constructor
+
+```typescript
+new Patter(options: PatterOptions)
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `carrier` | `Twilio \| Telnyx` | Yes | Carrier instance. Reads credentials from env vars when arguments are omitted. |
+| `phoneNumber` | `string` | Yes | Phone number in E.164 format. |
+| `webhookUrl` | `string` | Conditional | Public hostname, no scheme. Required unless using `tunnel: true` in `serve()`. |
+| `tunnel` | `CloudflareTunnel \| StaticTunnel \| boolean` | No | Tunnel directive. `true` is shorthand for `new CloudflareTunnel()`. |
+| `pricing` | `Record<string, Partial<ProviderPricing>>` | No | Custom pricing overrides. |
+| `persist` | `boolean \| string` | No | Persist the dashboard's call history to disk. Defaults to ON since 0.6.2 — pass `persist: false` to disable. See [Configuration](/typescript-sdk/configuration#persistent-dashboard-history). |
+
+### Instance Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `agent` | `(opts: AgentOptions) => Agent` | Validates and returns an agent configuration. |
+| `serve` | `(opts: ServeOptions) => Promise<void>` | Starts the embedded server. |
+| `call` | `(opts: LocalCallOptions) => Promise<void>` | Makes an outbound call. |
+| `test` | `(opts: ServeOptions) => Promise<void>` | Starts an interactive terminal test session. See [Test Mode](/typescript-sdk/test-mode). |
+| `disconnect` | `() => Promise<void>` | Stops the tunnel, embedded server, and WebSocket connection. |
+
+## Carriers
+
+```typescript
+import { Twilio, Telnyx } from "getpatter";
+```
+
+### Twilio
+
+```typescript
+class Twilio {
+  readonly kind: "twilio";
+  readonly accountSid: string;   // reads TWILIO_ACCOUNT_SID when omitted
+  readonly authToken: string;    // reads TWILIO_AUTH_TOKEN when omitted
+  constructor(opts?: { accountSid?: string; authToken?: string });
+}
+```
+
+### Telnyx
+
+```typescript
+class Telnyx {
+  readonly kind: "telnyx";
+  readonly apiKey: string;         // reads TELNYX_API_KEY when omitted
+  readonly connectionId: string;   // reads TELNYX_CONNECTION_ID when omitted
+  readonly publicKey: string;      // optional, reads TELNYX_PUBLIC_KEY when omitted
+  constructor(opts?: { apiKey?: string; connectionId?: string; publicKey?: string });
+}
+```
+
+---
+
+## Engines
+
+```typescript
+import { OpenAIRealtime, OpenAIRealtime2, ElevenLabsConvAI } from "getpatter";
+```
+
+### OpenAIRealtime
+
+```typescript
+class OpenAIRealtime {
+  readonly kind: "openai_realtime";
+  readonly apiKey: string;     // reads OPENAI_API_KEY when omitted
+  readonly voice: string;      // default "alloy"
+  readonly model: string;      // default "gpt-4o-mini-realtime-preview"
+  readonly reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  readonly inputAudioTranscriptionModel?: string;
+  constructor(opts?: {
+    apiKey?: string;
+    voice?: string;
+    model?: string;
+    reasoningEffort?: "minimal" | "low" | "medium" | "high";
+    inputAudioTranscriptionModel?: string;
+  });
+}
+```
+
+### OpenAIRealtime2
+
+```typescript
+class OpenAIRealtime2 {
+  readonly kind: "openai_realtime_2";
+  readonly apiKey: string;     // reads OPENAI_API_KEY when omitted
+  readonly voice: string;      // default "alloy"
+  readonly model: string;      // default "gpt-realtime-2"
+  readonly reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  readonly inputAudioTranscriptionModel?: string;
+  constructor(opts?: {
+    apiKey?: string;
+    voice?: string;
+    model?: string;
+    reasoningEffort?: "minimal" | "low" | "medium" | "high";
+    inputAudioTranscriptionModel?: string;
+  });
+}
+```
+
+Routes through `OpenAIRealtime2Adapter` and speaks the GA `session.update` wire shape (`output_modalities`, nested `audio.{input,output}`, `session.type = "realtime"`). GA session config pins `turn_detection.create_response: false` and `interrupt_response: false` so Patter owns response creation and barge-in cancellation. See [`OpenAIRealtime2`](/typescript-sdk/providers/openai-realtime-2).
+
+### ElevenLabsConvAI
+
+```typescript
+class ElevenLabsConvAI {
+  readonly kind: "elevenlabs_convai";
+  readonly apiKey: string;     // reads ELEVENLABS_API_KEY when omitted
+  readonly agentId: string;    // reads ELEVENLABS_AGENT_ID when omitted
+  readonly voice?: string;     // override agent default
+  constructor(opts?: { apiKey?: string; agentId?: string; voice?: string });
+}
+```
+
+---
+
+## STT classes
+
+```typescript
+import { DeepgramSTT, WhisperSTT, CartesiaSTT, AssemblyAISTT, SonioxSTT } from "getpatter";
+```
+
+Each class accepts an options object with `apiKey?: string` and falls back to the provider's standard env var. See the [STT page](/typescript-sdk/stt) for full constructor signatures.
+
+---
+
+## TTS classes
+
+```typescript
+import { ElevenLabsTTS, ElevenLabsWebSocketTTS, OpenAITTS, CartesiaTTS, RimeTTS, LMNTTTS } from "getpatter";
+```
+
+Each class accepts an options object with `apiKey?: string` and falls back to the provider's standard env var. See the [TTS page](/typescript-sdk/tts) for full constructor signatures.
+
+---
+
+## LLM classes
+
+```typescript
+import { OpenAILLM, AnthropicLLM, GroqLLM, CerebrasLLM, GoogleLLM } from "getpatter";
+```
+
+Each class accepts an options object with `apiKey?: string` and falls back to the provider's standard env var (`GoogleLLM` prefers `GEMINI_API_KEY`, falls back to `GOOGLE_API_KEY`). Pass an instance via `phone.agent({ llm })` for pipeline mode. `llm` is mutually exclusive with `onMessage` on `serve()` and is ignored when `engine` is set. See the [LLM page](/typescript-sdk/llm) for full constructor signatures.
+
+---
+
+## Tunnels
+
+```typescript
+import { CloudflareTunnel, StaticTunnel } from "getpatter";
+```
+
+| Class | Behavior |
+|-------|----------|
+| `new CloudflareTunnel()` | Auto-start a Cloudflare Quick Tunnel via the local `cloudflared` binary. |
+| `new StaticTunnel({ hostname })` | Use an existing public hostname (user-managed tunnel). |
+
+`tunnel: true` on `new Patter(...)` or `phone.serve(...)` is shorthand for `new CloudflareTunnel()`.
+
+---
+
+## Tools & Guardrails
+
+```typescript
+import { Tool, Guardrail, tool, guardrail } from "getpatter";
+```
+
+### Tool
+
+```typescript
+class Tool {
+  readonly name: string;
+  readonly description: string;
+  readonly parameters?: Record<string, unknown>;
+  readonly handler?: ToolHandler;
+  readonly webhookUrl?: string;
+  constructor(opts: ToolOptions);
+}
+```
+
+Either `handler` or `webhookUrl` must be provided.
+
+### Guardrail
+
+```typescript
+class Guardrail {
+  readonly name: string;
+  readonly blockedTerms?: string[];
+  readonly check?: (text: string) => boolean;
+  readonly replacement: string;
+  constructor(opts: GuardrailOptions);
+}
+```
+
+---
+
+## Interfaces
+
+### AgentOptions
+
+```typescript
+interface AgentOptions {
+  systemPrompt: string;
+  engine?: OpenAIRealtime | OpenAIRealtime2 | ElevenLabsConvAI;
+  stt?: STTProvider;
+  llm?: LLMProvider;
+  tts?: TTSProvider;
+  voice?: string;
+  model?: string;
+  language?: string;
+  firstMessage?: string;
+  tools?: ToolDefinition[];
+  variables?: Record<string, string>;
+  guardrails?: Guardrail[];
+  hooks?: PipelineHooks;
+  textTransforms?: ((text: string) => string)[];
+  vad?: VADProvider;
+  audioFilter?: AudioFilter;
+  backgroundAudio?: BackgroundAudioPlayer;
+  bargeInThresholdMs?: number;
+  aggressiveFirstFlush?: boolean;
+  disablePhonePreamble?: boolean;
+  prewarmFirstMessage?: boolean;  // default false; pipeline mode only
+  provider?: 'openai_realtime' | 'elevenlabs_convai' | 'pipeline';
+}
+```
+
+`provider` is a closed string literal — only `'openai_realtime'`, `'elevenlabs_convai'`, or `'pipeline'` are valid. It is normally derived from `engine` / `stt` + `tts` and rarely set by hand.
+
+### ServeOptions
+
+```typescript
+interface ServeOptions {
+  agent: Agent;
+  port?: number;
+  tunnel?: boolean;
+  onCallStart?: (data: Record<string, unknown>) => Promise<void>;
+  onCallEnd?: (data: Record<string, unknown>) => Promise<void>;
+  onTranscript?: (data: Record<string, unknown>) => Promise<void>;
+  onMessage?: PipelineMessageHandler | string;
+  onMetrics?: (data: Record<string, unknown>) => Promise<void>;
+  recording?: boolean;
+  localRecording?: boolean | string;  // SDK-side stereo WAV recording; string = output directory
+  voicemailMessage?: string;
+  pricing?: Record<string, Record<string, unknown>>;
+  dashboard?: boolean;
+  dashboardToken?: string;
+  dashboardDb?: string;
+  dashboardPersist?: boolean;
+  manageWebhook?: boolean;  // default true; ignored when tunnel: true
+}
+```
+
+`localRecording` enables carrier-neutral SDK-side recording: an interleaved stereo WAV (left = caller, right = agent, PCM16 16 kHz) written incrementally per call. Pass a directory string to choose the output directory. The final path is surfaced as `recording_path` in the `onCallEnd` payload. Independent of the carrier-side `recording` flag. See [Local Recording](/typescript-sdk/features#local-recording-carrier-neutral).
+
+### LocalCallOptions
+
+```typescript
+interface LocalCallOptions {
+  to: string;
+  agent: Agent;
+  machineDetection?: boolean;
+  voicemailMessage?: string;
+  variables?: Record<string, string>;
+  ringTimeout?: number;
+}
+```
+
+### ToolDefinition
+
+```typescript
+interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  webhookUrl?: string;
+  handler?: (args: Record<string, unknown>, context: Record<string, unknown>) => Promise<string>;
+}
+```
+
+### IncomingMessage
+
+```typescript
+interface IncomingMessage {
+  readonly text: string;
+  readonly callId: string;
+  readonly caller: string;
+}
+```
+
+### CallControl
+
+```typescript
+interface CallControl {
+  readonly callId: string;
+  readonly caller: string;
+  readonly callee: string;
+  transfer(number: string): Promise<void>;
+  hangup(): Promise<void>;
+}
+```
+
+### CallMetrics / CostBreakdown / LatencyBreakdown / TurnMetrics / ProviderPricing
+
+See [Metrics](/typescript-sdk/metrics) for the full shapes.
+
+## Error Classes
+
+All errors extend `PatterError`, which extends the native `Error` class.
+
+| Class | Description |
+|-------|-------------|
+| `PatterError` | Base error class for all SDK errors. |
+| `PatterConnectionError` | WebSocket connection failures or disconnection errors. |
+| `AuthenticationError` | Invalid or missing API key. |
+| `ProvisionError` | Failures when provisioning resources (numbers, agents, calls). |
+| `RateLimitError` | Provider returned HTTP 429 on connect/upgrade. Extends `PatterConnectionError`. |
+
+```typescript
+import {
+  PatterError,
+  PatterConnectionError,
+  AuthenticationError,
+  ProvisionError,
+  RateLimitError,
+  ErrorCode,
+} from "getpatter";
+
+try {
+  await phone.call({ to: "+15551234567", agent });
+} catch (error) {
+  if (error instanceof PatterError && error.code === ErrorCode.RATE_LIMIT) {
+    // back off and retry
+  } else if (error instanceof PatterConnectionError) {
+    // network / WS failure
+  }
+}
+```
+
+### ErrorCode
+
+Every Patter exception carries a stable, machine-readable `code` property. Branch on the code instead of class-name strings:
+
+```typescript
+import { ErrorCode } from "getpatter";
+
+ErrorCode.CONFIG;                // "CONFIG"
+ErrorCode.CONNECTION;            // "CONNECTION"
+ErrorCode.AUTH;                  // "AUTH"
+ErrorCode.TIMEOUT;               // "TIMEOUT"
+ErrorCode.RATE_LIMIT;            // "RATE_LIMIT"
+ErrorCode.WEBHOOK_VERIFICATION;  // "WEBHOOK_VERIFICATION"
+ErrorCode.INPUT_VALIDATION;      // "INPUT_VALIDATION"
+ErrorCode.PROVIDER_ERROR;        // "PROVIDER_ERROR"
+ErrorCode.PROVISION;             // "PROVISION"
+ErrorCode.INTERNAL;              // "INTERNAL"
+```
+
+Shipped as a `const` object plus value-union type (not a TS `enum`) so it is tree-shakeable and compatible with `verbatimModuleSyntax`. Mirrored byte-for-byte by the Python `ErrorCode` `StrEnum`.
+
+## Top-level exports
+
+```typescript
+export {
+  // Client
+  Patter,
+
+  // Carriers
+  Twilio, Telnyx,
+
+  // Engines
+  OpenAIRealtime, OpenAIRealtime2, ElevenLabsConvAI,
+  OpenAIRealtimeAdapter, OpenAIRealtime2Adapter, ElevenLabsConvAIAdapter,
+
+  // STT classes
+  DeepgramSTT, WhisperSTT, CartesiaSTT, AssemblyAISTT, SonioxSTT,
+
+  // TTS classes
+  ElevenLabsTTS, ElevenLabsWebSocketTTS, OpenAITTS, CartesiaTTS, RimeTTS, LMNTTTS,
+
+  // LLM classes
+  OpenAILLM, AnthropicLLM, GroqLLM, CerebrasLLM, GoogleLLM,
+
+  // Tunnels
+  CloudflareTunnel, StaticTunnel,
+
+  // Public primitives
+  Tool, Guardrail, tool, guardrail,
+
+  // Errors
+  PatterError, PatterConnectionError, AuthenticationError, ProvisionError,
+  RateLimitError, ErrorCode,
+} from "getpatter";
+```
+
+All public classes are imported by name from the package barrel — there are no subpath entry points in `getpatter`.

@@ -1,0 +1,43 @@
+---
+title: "Cartesia STT"
+description: "Streaming speech-to-text via Cartesia's ink-whisper model."
+icon: "waveform"
+---
+
+# Cartesia STT
+
+Streaming speech-to-text using Cartesia's `ink-whisper` model. Uses `ws`, no vendor SDK required.
+
+## Install
+
+```bash
+npm install getpatter
+```
+
+## Usage
+
+```typescript
+import { CartesiaSTT } from "getpatter";
+
+const stt = new CartesiaSTT();                                    // reads CARTESIA_API_KEY
+const stt2 = new CartesiaSTT({ apiKey: "csk_...", language: "en" });
+```
+
+Plug it into an agent:
+
+```typescript
+// npx tsx example.ts
+import { Patter, Twilio, CartesiaSTT, ElevenLabsTTS } from "getpatter";
+
+const phone = new Patter({ carrier: new Twilio(), phoneNumber: "+15550001234" });
+
+const agent = phone.agent({
+  stt: new CartesiaSTT(),                             // CARTESIA_API_KEY from env
+  tts: new ElevenLabsTTS({ voiceId: "rachel" }),
+  systemPrompt: "You are a helpful assistant.",
+});
+
+await phone.serve({ agent });
+```
+
+Supported sample rates: 8000, 16000, 24000, 44100, 48000 Hz.

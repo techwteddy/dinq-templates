@@ -1,0 +1,404 @@
+"""Deepgram streaming STT adapter.
+
+Implements :class:`getpatter.providers.base.STTProvider` against Deepgram's
+v1 ``/listen`` WebSocket endpoint. Handles KeepAlive pings, ``Finalize`` /
+``CloseStream`` graceful shutdown, and normalises ``SpeechStarted`` /
+``UtteranceEnd`` VAD events alongside ``Results`` transcripts.
+"""
+
+import asyncio
+import json
+import logging
+from enum import IntEnum, StrEnum
+from typing import AsyncIterator, ClassVar, Union
+from urllib.parse import urlencode
+
+import websockets
+from websockets.exceptions import InvalidStatus
+
+from getpatter.exceptions import (
+    AuthenticationError,
+    PatterConnectionError,
+    RateLimitError,
+)
+from getpatter.providers.base import STTProvider, Transcript
+
+logger = logging.getLogger("getpatter.providers.deepgram_stt")
+
+DEEPGRAM_WS_URL = "wss://api.deepgram.com/v1/listen"
+
+
+class DeepgramModel(StrEnum):
+    """Known Deepgram STT models."""
+
+    NOVA_3 = "nova-3"
+    NOVA_2 = "nova-2"
+    NOVA_2_PHONECALL = "nova-2-phonecall"
+    NOVA_2_GENERAL = "nova-2-general"
+    NOVA_2_MEETING = "nova-2-meeting"
+    NOVA = "nova"
+    ENHANCED = "enhanced"
+    BASE = "base"
+
+
+class DeepgramEncoding(StrEnum):
+    """Audio encodings accepted by Deepgram's streaming endpoint."""
+
+    LINEAR16 = "linear16"
+    MULAW = "mulaw"
+    ALAW = "alaw"
+    OPUS = "opus"
+    FLAC = "flac"
+    AMR_NB = "amr-nb"
+    AMR_WB = "amr-wb"
+
+
+class DeepgramSampleRate(IntEnum):
+    """Common PCM sample rates for Deepgram streaming input."""
+
+    HZ_8000 = 8000
+    HZ_16000 = 16000
+    HZ_24000 = 24000
+    HZ_44100 = 44100
+    HZ_48000 = 48000
+
+
+# Deepgram closes idle sockets after 10 s with no audio. Send a KeepAlive
+# text frame every 4 s — well inside the 3–5 s window recommended by
+# Deepgram's docs.
+_KEEPALIVE_INTERVAL_SECONDS = 4.0
+
+# After sending Finalize on close() we give the server a short window to
+# flush any trailing partial as a Results frame before we send CloseStream.
+# Kept well below 500 ms total close-latency budget.
+_FINALIZE_DRAIN_SECONDS = 0.1
+
+
+class DeepgramSTT(STTProvider):
+    """Streaming STT adapter for Deepgram's v1 ``/listen`` WebSocket API."""
+
+    #: Stable pricing/dashboard key — read by stream-handler/metrics.
+    provider_key: ClassVar[str] = "deepgram"
+
+    def __init__(
+        self,
+        api_key: str,
+        language: str = "en",
+        model: Union[DeepgramModel, str] = DeepgramModel.NOVA_3,
+        encoding: Union[DeepgramEncoding, str] = DeepgramEncoding.LINEAR16,
+        sample_rate: Union[DeepgramSampleRate, int] = DeepgramSampleRate.HZ_16000,
+        *,
+        endpointing_ms: int = 150,
+        utterance_end_ms: int | None = 1000,
+        smart_format: bool = False,
+        interim_results: bool = True,
+        vad_events: bool = True,
+    ):
+        # ``smart_format`` defaults to ``False`` because punctuation and numeral
+        # formatting add roughly 50–150 ms to TTFT on each final transcript and
+        # are rarely useful for telephony pipelines that immediately feed the
+        # text into an LLM. Pass ``smart_format=True`` to opt back in for use
+        # cases (e.g. dashboards, transcripts) where the formatted text is
+        # surfaced directly to humans.
+        self.api_key = api_key
+        self.language = language
+        self.model = model
+        self.encoding = encoding
+        self.sample_rate = sample_rate
+        self.endpointing_ms = endpointing_ms
+        self.utterance_end_ms = utterance_end_ms
+        self.smart_format = smart_format
+        self.interim_results = interim_results
+        self.vad_events = vad_events
+        self._ws = None
+        self._keepalive_task: asyncio.Task[None] | None = None
+        self.request_id: str | None = None
+        # Bytes of audio forwarded to Deepgram since the last cost emission.
+        # Used by ``_record_transcript_cost`` to compute ``patter.cost.stt_seconds``.
+        self._audio_bytes_sent: int = 0
+
+    def _record_transcript_cost(self) -> None:
+        """Emit ``patter.cost.stt_seconds`` for audio buffered since the last
+        final transcript. No-op when OTel is missing / no scope active."""
+        try:
+            from getpatter.observability.attributes import record_patter_attrs
+
+            bytes_per_sample = 1 if self.encoding == "mulaw" else 2
+            seconds = self._audio_bytes_sent / float(
+                self.sample_rate * bytes_per_sample
+            )
+            record_patter_attrs(
+                {
+                    "patter.cost.stt_seconds": seconds,
+                    "patter.stt.provider": "deepgram",
+                }
+            )
+            self._audio_bytes_sent = 0
+        except Exception:  # pragma: no cover — defense in depth
+            logger.debug("_record_transcript_cost failed", exc_info=True)
+
+    def __repr__(self) -> str:
+        return f"DeepgramSTT(model={self.model!r}, language={self.language!r}, encoding={self.encoding!r})"
+
+    @classmethod
+    def for_twilio(
+        cls,
+        api_key: str,
+        language: str = "en",
+        model: Union[DeepgramModel, str] = DeepgramModel.NOVA_3,
+        **kwargs,
+    ):
+        """Create a Deepgram adapter configured for Twilio mulaw 8kHz."""
+        return cls(
+            api_key=api_key,
+            language=language,
+            model=model,
+            encoding=DeepgramEncoding.MULAW,
+            sample_rate=DeepgramSampleRate.HZ_8000,
+            **kwargs,
+        )
+
+    async def warmup(self) -> None:
+        """Pre-call WebSocket warmup for the Deepgram ``/v1/listen`` endpoint.
+
+        Opens the WS (full DNS + TLS + auth handshake), idles ~250 ms so the
+        provider edge has the session warm in its routing table, then closes
+        cleanly. By the time :meth:`connect` is invoked at call-pickup the
+        DNS resolver is hot, the TCP+TLS session is in the connection pool,
+        and recent WS auth is still warm at Deepgram's edge — net wire
+        time saving of 200-500 ms vs a cold WS open.
+
+        Billing safety: Deepgram bills on streamed audio seconds (per
+        https://deepgram.com/pricing). Opening + closing the WebSocket
+        without sending any audio frames does not consume billable seconds.
+        Best-effort: any failure is logged at DEBUG and never raised.
+        """
+        params = {
+            "model": self.model,
+            "language": self.language,
+            "encoding": self.encoding,
+            "sample_rate": str(self.sample_rate),
+            "channels": "1",
+        }
+        url = f"{DEEPGRAM_WS_URL}?{urlencode(params)}"
+        ws = None
+        try:
+            ws = await asyncio.wait_for(
+                websockets.connect(
+                    url,
+                    additional_headers={"Authorization": f"Token {self.api_key}"},
+                ),
+                timeout=5.0,
+            )
+            # Idle briefly so the server-side routing/state cache stays warm
+            # at Deepgram's edge. ~250 ms is the documented sweet-spot for
+            # provider edge cache retention.
+            await asyncio.sleep(0.25)
+        except Exception as exc:  # noqa: BLE001 - best-effort
+            logger.debug("Deepgram STT warmup failed (best-effort): %s", exc)
+        finally:
+            if ws is not None:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+
+    async def connect(self) -> None:
+        """Open the Deepgram WebSocket and start the KeepAlive loop."""
+        params = {
+            "model": self.model,
+            "language": self.language,
+            "encoding": self.encoding,
+            "sample_rate": str(self.sample_rate),
+            "channels": "1",
+            "interim_results": "true" if self.interim_results else "false",
+            "endpointing": str(self.endpointing_ms),
+            "smart_format": "true" if self.smart_format else "false",
+            "vad_events": "true" if self.vad_events else "false",
+            "no_delay": "true",
+        }
+        if self.utterance_end_ms is not None:
+            # utterance_end_ms has a hard minimum of 1000 on Deepgram's API.
+            params["utterance_end_ms"] = str(max(int(self.utterance_end_ms), 1000))
+        url = f"{DEEPGRAM_WS_URL}?{urlencode(params)}"
+        try:
+            self._ws = await websockets.connect(
+                url,
+                additional_headers={"Authorization": f"Token {self.api_key}"},
+            )
+        except InvalidStatus as exc:
+            # websockets>=14 exposes the HTTP status via exc.response.status_code.
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            if status_code in (401, 403):
+                raise AuthenticationError(
+                    f"Deepgram rejected the API key (HTTP {status_code})."
+                ) from exc
+            if status_code == 429:
+                raise RateLimitError(
+                    "Deepgram rate limit exceeded (HTTP 429)."
+                ) from exc
+            raise PatterConnectionError(
+                f"Deepgram WebSocket upgrade failed (HTTP {status_code})."
+            ) from exc
+        except OSError as exc:
+            # Transient network / DNS / TLS issues — wrap so callers can
+            # distinguish from programmer errors.
+            raise PatterConnectionError(
+                f"Failed to connect to Deepgram: {exc}"
+            ) from exc
+
+        # Start the KeepAlive pump. Deepgram closes the socket after ~10 s of
+        # silence; a 4 s cadence keeps us comfortably inside that window.
+        self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+
+    async def _keepalive_loop(self) -> None:
+        try:
+            while self._ws is not None and self._ws.state.name == "OPEN":
+                await asyncio.sleep(_KEEPALIVE_INTERVAL_SECONDS)
+                if self._ws is None or self._ws.state.name != "OPEN":
+                    return
+                try:
+                    await self._ws.send(json.dumps({"type": "KeepAlive"}))
+                except Exception:
+                    # Socket may have raced to close; the receive loop will
+                    # observe the closure and surface it to the caller.
+                    return
+        except asyncio.CancelledError:
+            raise
+
+    async def send_audio(self, audio_chunk: bytes) -> None:
+        """Send a PCM/mulaw audio chunk to Deepgram. Empty chunks are dropped."""
+        if self._ws is None:
+            raise RuntimeError("Not connected. Call connect() first.")
+        # Deepgram treats a zero-length binary frame as CloseStream — so
+        # silently drop empty chunks to avoid accidentally tearing down
+        # the session (e.g. when a VAD gate emits an empty buffer).
+        if len(audio_chunk) == 0:
+            return
+        self._audio_bytes_sent += len(audio_chunk)
+        await self._ws.send(audio_chunk)
+
+    async def finalize(self) -> None:
+        """Force Deepgram to immediately emit a final ``Results`` frame for
+        the in-flight utterance, rather than waiting for its own endpoint
+        heuristic (utterance_end_ms ~1 s + natural-pause endpointing).
+        Called by the SDK on VAD ``speech_end`` and after barge-in
+        cancel — both moments where the SDK already knows the user has
+        stopped speaking and waiting for Deepgram's own endpointing only
+        adds dead air.
+
+        Idempotent: safe to call when the socket is closed/closing.
+        """
+        ws = self._ws
+        if ws is None:
+            return
+        try:
+            await ws.send(json.dumps({"type": "Finalize"}))
+        except Exception:
+            # Socket changed state between the readyState check and send —
+            # safe to ignore; the next audio chunk will trigger another
+            # utterance and another Finalize opportunity.
+            pass
+
+    def _parse_message(self, raw_message: str) -> Transcript | None:
+        data = json.loads(raw_message)
+        msg_type = data.get("type", "")
+
+        if msg_type == "Metadata":
+            self.request_id = data.get("request_id")
+            return None
+
+        if msg_type == "SpeechStarted":
+            return Transcript(
+                text="",
+                is_final=False,
+                confidence=0.0,
+                event_type="SpeechStarted",
+                request_id=self.request_id,
+            )
+
+        if msg_type == "UtteranceEnd":
+            return Transcript(
+                text="",
+                is_final=True,
+                confidence=0.0,
+                event_type="UtteranceEnd",
+                request_id=self.request_id,
+            )
+
+        if msg_type != "Results":
+            return None
+
+        alternatives = data.get("channel", {}).get("alternatives", [])
+        if not alternatives:
+            return None
+
+        best = alternatives[0]
+        text = best.get("transcript", "").strip()
+        if not text:
+            return None
+
+        # is_final alone marks a stable utterance; speech_final is a faster
+        # end-of-utterance hint from Deepgram's VAD. Accept either so the
+        # pipeline doesn't wait up to utterance_end_ms on every turn.
+        speech_final = bool(data.get("speech_final", False))
+        is_final = bool(data.get("is_final", False) or speech_final)
+        from_finalize = bool(data.get("from_finalize", False))
+        words = best.get("words", []) or []
+        return Transcript(
+            text=text,
+            is_final=is_final,
+            confidence=best.get("confidence", 0.0),
+            speech_final=speech_final,
+            from_finalize=from_finalize,
+            request_id=self.request_id,
+            words=tuple(words),
+            event_type="Results",
+        )
+
+    async def receive_transcripts(self) -> AsyncIterator[Transcript]:
+        """Yield :class:`Transcript` events parsed from the Deepgram stream."""
+        if self._ws is None:
+            raise RuntimeError("Not connected. Call connect() first.")
+
+        async for raw_message in self._ws:
+            if isinstance(raw_message, bytes):
+                continue  # Skip binary frames
+            transcript = self._parse_message(raw_message)
+            if transcript is not None:
+                if transcript.is_final:
+                    self._record_transcript_cost()
+                yield transcript
+
+    async def close(self) -> None:
+        """Send Finalize + CloseStream, then close the Deepgram WebSocket."""
+        # Cancel the KeepAlive pump first so it does not race the close
+        # handshake.
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
+            try:
+                await self._keepalive_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._keepalive_task = None
+
+        if self._ws is not None:
+            ws = self._ws
+            # Send Finalize first to flush any trailing partial into a
+            # final Results frame. Give the server a short drain window
+            # (bounded well below the 500 ms close-latency budget) before
+            # sending CloseStream.
+            try:
+                await ws.send(json.dumps({"type": "Finalize"}))
+                await asyncio.sleep(_FINALIZE_DRAIN_SECONDS)
+            except Exception:
+                pass
+            try:
+                await ws.send(json.dumps({"type": "CloseStream"}))
+            except Exception:
+                pass
+            try:
+                await ws.close()
+            except Exception:
+                pass
+            self._ws = None

@@ -1,0 +1,82 @@
+---
+title: "LMNT TTS"
+description: "Blizzard and Aurora TTS models via the LMNT HTTP API."
+icon: "waveform"
+---
+
+# LMNT TTS
+
+`LMNTTTS` calls LMNT's [`/v1/ai/speech/bytes`](https://docs.lmnt.com/api-reference/speech/synthesize-speech-bytes) endpoint. The Patter port defaults to `format="raw"` (PCM_S16LE) at 16 kHz for direct telephony use; callers can switch to `mp3`, `mulaw`, `wav`, `aac` when needed.
+
+## Install
+
+```bash
+pip install "getpatter[lmnt]"
+```
+
+## Usage
+
+```python
+# Namespaced import
+from getpatter.tts import lmnt
+
+tts = lmnt.TTS()                                          # reads LMNT_API_KEY
+tts = lmnt.TTS(model="blizzard", voice="leah")
+
+# Flat alias (equivalent)
+from getpatter import LMNTTTS
+
+tts = LMNTTTS(model="blizzard", voice="leah")
+```
+
+In an agent:
+
+```python
+import asyncio
+from getpatter import Patter, Twilio, DeepgramSTT, LMNTTTS
+
+phone = Patter(carrier=Twilio(), phone_number="+15550001234")
+
+agent = phone.agent(
+    stt=DeepgramSTT(),                                    # DEEPGRAM_API_KEY from env
+    tts=LMNTTTS(model="blizzard", voice="leah"),          # LMNT_API_KEY from env
+    system_prompt="You are a helpful assistant.",
+)
+
+asyncio.run(phone.serve(agent))
+```
+
+## Low-level usage
+
+```python
+from getpatter.providers.lmnt_tts import LMNTTTS as _LowLevelTTS
+
+tts = _LowLevelTTS(
+    api_key="...",          # or LMNT_API_KEY env var
+    model="blizzard",
+    voice="leah",
+    # language=None -> defaults to "auto" for blizzard, "en" for aurora
+    format="raw",
+    sample_rate=16000,
+    temperature=1.0,
+    top_p=0.8,
+)
+
+async for chunk in tts.synthesize("Hello from Patter."):
+    ...
+
+await tts.close()
+```
+
+## Options
+
+| Option | Default | Notes |
+|---|---|---|
+| `api_key` | `None` | Reads from `LMNT_API_KEY` when omitted. |
+| `model` | `"blizzard"` | `"blizzard"` or `"aurora"`. |
+| `voice` | `"leah"` | LMNT voice id. |
+| `language` | `None` | Auto-derived from model when omitted. |
+| `format` | `"raw"` | `"aac"`, `"mp3"`, `"mulaw"`, `"raw"`, `"wav"`. |
+| `sample_rate` | `16000` | `8000`, `16000`, or `24000`. |
+| `temperature` | `1.0` | Higher = more expressive. |
+| `top_p` | `0.8` | Controls stability. |

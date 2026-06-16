@@ -1,0 +1,119 @@
+/**
+ * Shared STT / TTS adapter dispatch.
+ *
+ * In v0.5.0+ callers always pass pre-instantiated adapters (``agent.stt`` /
+ * ``agent.tts`` are ``STTAdapter`` / ``TTSAdapter`` instances), so these
+ * helpers are thin pass-throughs that return the instance or null. Kept as
+ * functions so the Twilio/Telnyx bridges have a single dispatch point.
+ */
+import { getLogger } from './logger';
+import type { AgentOptions } from './types';
+
+/** Per-word timings / metadata (Deepgram-shaped). Optional on every adapter. */
+export interface STTWord {
+  readonly word?: string;
+  readonly start?: number;
+  readonly end?: number;
+  readonly confidence?: number;
+  readonly punctuated_word?: string;
+  readonly speaker?: number;
+}
+
+/**
+ * Facade transcript shape — widened to surface richer provider fields
+ * (Deepgram emits all of them) without forcing adapters that only know
+ * ``text``/``isFinal`` to change. All non-text fields are optional.
+ */
+export interface STTTranscript {
+  text: string;
+  isFinal?: boolean;
+  /** Overall transcript confidence in [0, 1]. */
+  confidence?: number;
+  /** Provider-side end-of-utterance hint (faster than ``isFinal``). */
+  speechFinal?: boolean;
+  /** True when the result was produced in response to a Finalize command. */
+  fromFinalize?: boolean;
+  /** Provider request id (Deepgram populates this from the Metadata frame). */
+  requestId?: string;
+  /** Per-word timings / metadata when the provider emits them. */
+  words?: ReadonlyArray<STTWord>;
+  /** Which provider event this transcript represents (e.g. ``Results``). */
+  eventType?: string;
+}
+
+/** Callback invoked by an `STTAdapter` for each (partial or final) transcript event. */
+export type STTTranscriptCallback = (t: STTTranscript) => Promise<void> | void;
+
+/** Shape shared by every STT adapter in the SDK. */
+export interface STTAdapter {
+  connect(): Promise<void>;
+  sendAudio(pcm: Buffer): void | Promise<void>;
+  onTranscript(cb: STTTranscriptCallback): void;
+  close(): void | Promise<void>;
+  /**
+   * Optional: ask the provider to immediately finalise the in-flight
+   * utterance (rather than waiting for its own endpoint timer). Called by
+   * ``StreamHandler`` whenever the SDK's VAD signals ``speech_end``, and
+   * after a barge-in cancel — both moments where waiting for the
+   * provider's endpoint heuristic stalls the next turn.
+   *
+   * Implementations that do not support utterance-level finalisation
+   * (e.g. one-shot transcribers like Whisper) should omit this method
+   * entirely; the stream handler does an optional-chained call.
+   */
+  finalize?(): void | Promise<void>;
+  /**
+   * Optional best-effort pre-call DNS / TLS / HTTP-keepalive warmup.
+   * Default behaviour is a no-op — providers that benefit (e.g.
+   * provider WebSockets with a slow handshake) can override. Failures
+   * must never abort the call.
+   */
+  warmup?(): Promise<void>;
+}
+
+/** Shape shared by every TTS adapter in the SDK. */
+export interface TTSAdapter {
+  synthesizeStream(text: string): AsyncIterable<Buffer>;
+  /**
+   * Optional best-effort pre-call DNS / TLS / HTTP-keepalive warmup.
+   * Default behaviour is a no-op. Failures must never abort the call.
+   */
+  warmup?(): Promise<void>;
+}
+
+/**
+ * Return the STT adapter instance attached to ``agent``, or null when no STT
+ * is configured. In v0.5.0+ ``agent.stt`` is always an adapter instance.
+ */
+export async function createSTT(agent: AgentOptions): Promise<STTAdapter | null> {
+  const stt = agent.stt ?? null;
+  if (!stt) return null;
+  // CLONE per call: the documented pattern hands ONE adapter instance to ONE
+  // agent served for MANY calls, but the adapters are stateful per-connection
+  // objects — concurrent calls sharing one instance overwrote each other's
+  // sockets/callback sets (cross-call transcript bleed; the first hangup
+  // closed the surviving call's socket). Adapters without clone() fall back
+  // to the legacy shared instance with a loud warning.
+  const cloneable = stt as STTAdapter & { clone?: () => STTAdapter };
+  if (typeof cloneable.clone === 'function') {
+    try {
+      return cloneable.clone();
+    } catch (err) {
+      getLogger().warn(
+        `STT adapter ${stt.constructor?.name ?? 'unknown'} clone() failed (${String(err)}) — ` +
+          'falling back to the SHARED instance; concurrent calls may interfere.',
+      );
+      return stt;
+    }
+  }
+  getLogger().warn(
+    `STT adapter ${stt.constructor?.name ?? 'unknown'} has no clone() — using the SHARED ` +
+      'instance; concurrent calls on this agent may interfere. Implement clone() to fix.',
+  );
+  return stt;
+}
+
+/** Return the TTS adapter instance attached to ``agent``, or null. */
+export async function createTTS(agent: AgentOptions): Promise<TTSAdapter | null> {
+  return agent.tts ?? null;
+}
