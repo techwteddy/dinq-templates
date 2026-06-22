@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-surface-cream text-neutral-body font-body antialiased leading-relaxed;
+}
+
+a {
+  @apply text-primary hover:text-primary-dark transition-colors;
+}
+
+/* Headings use friendly, rounded Nunito for warmth */
+h1, h2, h3, h4, h5, h6 {
+  @apply font-display;
+}
+
+.button-primary {
+  @apply inline-flex items-center justify-center rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary min-h-[48px];
+}
+
+.card {
+  @apply rounded-2xl bg-surface-paper shadow-sm ring-1 ring-neutral-muted/20;
+}
+
+/* Hide scrollbar for horizontal carousels */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Safe area for mobile devices with notches */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Updated text color classes for better contrast */
+.text-slate-400 {
+  color: #6b7280; /* Increased contrast */
+}
+
+.text-slate-500 {
+  color: #4b5563; /* Increased contrast */
+}
+
+.text-slate-100 {
+  color: #1f2937; /* Darker text for better readability */
+}
+
+.text-slate-50 {
+  color: #111827; /* High contrast for light backgrounds */
+}
