@@ -1,0 +1,35 @@
+{
+  "name": "@AfriWage/sdk",
+  "version": "0.1.0",
+  "description": "Stellar SDK helpers for AfriWage — instant USDC payroll for African gig workers",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "type-check": "tsc --noEmit",
+    "lint": "biome check src/",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^12.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsup": "^8.1.0",
+    "typescript": "^5.5.3",
+    "vitest": "^3.2.4"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT"
+}
